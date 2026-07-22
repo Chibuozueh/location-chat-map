@@ -1,0 +1,237 @@
+import { useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Clock,
+  Coffee,
+  Globe,
+  MapPin,
+  Star,
+  Wine,
+  X,
+  Trees,
+  PawPrint,
+  Plug,
+  Volume2,
+  Wifi,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  CATEGORY_LABEL,
+  FEATURE_LABEL,
+  PRICE_SYMBOL,
+  type LocationDoc,
+} from "./types";
+
+const FEATURE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  wifi: Wifi,
+  outdoor: Trees,
+  "pet-friendly": PawPrint,
+  "power-outlets": Plug,
+  quiet: Volume2,
+};
+
+function dayLabel(i: number): string {
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i];
+}
+
+function isCurrentlyOpen(loc: LocationDoc, now = new Date()): boolean {
+  const dayKey = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][now.getDay()] as
+    | "sun"
+    | "mon"
+    | "tue"
+    | "wed"
+    | "thu"
+    | "fri"
+    | "sat";
+  const d = loc.hours[dayKey];
+  if (!d) return false;
+  const openM = (() => {
+    const m = d.open.split(":");
+    return parseInt(m[0], 10) * 60 + parseInt(m[1], 10);
+  })();
+  const closeM = (() => {
+    const m = d.close.split(":");
+    return parseInt(m[0], 10) * 60 + parseInt(m[1], 10);
+  })();
+  const curM = now.getHours() * 60 + now.getMinutes();
+  return curM >= openM && curM < closeM;
+}
+
+function LocationCover({
+  src,
+  alt,
+  initial,
+  accent,
+}: {
+  src?: string;
+  alt: string;
+  initial: string;
+  accent: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div
+        className="grid h-full w-full place-items-center text-[44px] font-display font-semibold text-white/95"
+        style={{
+          background: `linear-gradient(135deg, ${accent} 0%, oklch(0.4 0.06 ${accent ? "50" : "60"}) 100%)`,
+        }}
+        aria-label={alt}
+      >
+        {initial}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-full w-full object-cover"
+    />
+  );
+}
+
+export function LocationCard(props: {
+  loc: LocationDoc | null;
+  onClose: () => void;
+}) {
+  const { loc, onClose } = props;
+  if (!loc) return null;
+  const open = isCurrentlyOpen(loc);
+  const today = dayLabel(new Date().getDay());
+  const accent = loc.accentColor || "#A47551";
+
+  return (
+    <motion.div
+      key={loc.slug}
+      initial={{ opacity: 0, y: 16, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 16, scale: 0.98 }}
+      transition={{ type: "spring", stiffness: 240, damping: 26 }}
+      className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border/70 bg-card shadow-pop"
+    >
+      <div className="grid grid-cols-5 gap-0">
+        <div className="col-span-5 sm:col-span-2 relative h-44 sm:h-full overflow-hidden bg-muted">
+          <LocationCover
+            src={loc.imageUrl}
+            alt={loc.name}
+            initial={loc.name.charAt(0)}
+            accent={accent}
+          />
+        </div>
+        <div className="col-span-5 sm:col-span-3 relative flex flex-col gap-3 p-5">
+          <button
+            onClick={onClose}
+            className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground backdrop-blur transition hover:bg-background"
+            aria-label="Close detail card"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+          <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: accent }}
+            />
+            {CATEGORY_LABEL[loc.category] ?? loc.category}
+            <span className="ml-auto text-[11px] text-muted-foreground/80">
+              {PRICE_SYMBOL[loc.priceTier] ?? "$"}
+            </span>
+          </div>
+          <div>
+            <h3 className="font-display text-[22px] font-semibold leading-tight tracking-[-0.01em]">
+              {loc.name}
+            </h3>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+              {loc.tagline}
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-[12.5px]">
+            <span className="inline-flex items-center gap-1 font-medium">
+              <Star className="h-3.5 w-3.5 fill-accent text-accent" />
+              {loc.rating.toFixed(1)}
+            </span>
+            <span className="text-muted-foreground">
+              {loc.reviewCount.toLocaleString()} reviews
+            </span>
+            <span className="ml-auto">
+              <Badge
+                variant={open ? "default" : "secondary"}
+                className={open ? "bg-accent text-accent-foreground" : ""}
+              >
+                <span
+                  className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${open ? "bg-white" : "bg-muted-foreground"}`}
+                />
+                {open ? `Open today` : "Closed now"}
+              </Badge>
+            </span>
+          </div>
+          <div className="mt-1 flex items-start gap-2 rounded-lg bg-secondary/40 px-3 py-2 text-[12.5px] leading-relaxed text-secondary-foreground">
+            <MapPin className="mt-[2px] h-3.5 w-3.5 shrink-0 text-accent" />
+            <span>
+              {loc.address}
+              <br />
+              {loc.city}, {loc.state} {loc.postalCode}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-[12px]">
+            <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Coffee className="h-3 w-3" /> Signature
+              </div>
+              <div className="mt-0.5 font-medium text-foreground">{loc.signatureDrink}</div>
+            </div>
+            <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Wine className="h-3 w-3" /> Established
+              </div>
+              <div className="mt-0.5 font-medium text-foreground">{loc.openedYear}</div>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/40 p-2.5 text-[11.5px] text-muted-foreground">
+            <Clock className="mt-[1px] h-3 w-3 shrink-0" />
+            <div className="grid w-full grid-cols-7 gap-1">
+              {(["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const).map((d, i) => {
+                const isToday =
+                  ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][i] === today.toLowerCase();
+                return (
+                  <div
+                    key={d}
+                    className={`rounded px-1 py-0.5 text-center ${isToday ? "bg-accent/15 text-foreground" : ""}`}
+                  >
+                    <div className="text-[9.5px] uppercase tracking-wider">
+                      {dayLabel(i + 1).slice(0, 1)}
+                    </div>
+                    <div className="text-[10px] tabular-nums">
+                      {loc.hours[d].open}–{loc.hours[d].close}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {loc.features.map((f) => {
+              const Icon = FEATURE_ICONS[f] ?? Globe;
+              return (
+                <span
+                  key={f}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/40 px-2.5 py-1 text-[11px] text-secondary-foreground"
+                >
+                  <Icon className="h-3 w-3 text-accent" />
+                  {FEATURE_LABEL[f] ?? f}
+                </span>
+              );
+            })}
+          </div>
+          {loc.description && (
+            <p className="text-[12px] leading-relaxed text-muted-foreground">
+              {loc.description}
+            </p>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
