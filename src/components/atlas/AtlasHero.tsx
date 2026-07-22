@@ -4,17 +4,18 @@ import { Link } from "react-router";
 
 export function AtlasHero(props: {
   total: number;
+  uploadedCount: number | null;
   openNow: number;
   avgRating: number;
   cities: string[];
   onExplore: () => void;
 }) {
-  const { total, openNow, avgRating, cities, onExplore } = props;
+  const { total, uploadedCount, openNow, avgRating, cities, onExplore } = props;
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
       <div className="absolute inset-0 gradient-paper" aria-hidden />
       <div
-        className="absolute inset-0 grid-paper opacity-[0.35]"
+        className="absolute inset-0 grid-paper opacity-[0.35]\"
         aria-hidden
       />
       <div className="relative grid grid-cols-1 gap-6 px-6 py-8 md:grid-cols-[1.4fr_1fr] md:px-10 md:py-12">
@@ -77,7 +78,7 @@ export function AtlasHero(props: {
           className="flex flex-col justify-center gap-3 md:items-end"
         >
           <div className="grid grid-cols-3 gap-2 md:gap-3">
-            <Stat label="assets" value={total} />
+            <AssetsStat value={uploadedCount} />
             <Stat label="avg score" value={avgRating.toFixed(1)} suffix="★" />
             <Stat label="open now" value={openNow} />
           </div>
@@ -112,5 +113,43 @@ function Stat({
         {label}
       </div>
     </div>
+  );
+}
+
+/**
+ * Hero "assets" stat — styled with Morehouse maroon prominence. Before any
+ * CSV upload renders an em-dash; after upload, the parsed CSV row count.
+ */
+function AssetsStat({ value }: { value: number | null }) {
+  const hasUpload = value !== null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 220, damping: 18 }}
+      className={`relative overflow-hidden rounded-2xl border bg-background/80 px-3 py-3 shadow-pop backdrop-blur ${
+        hasUpload
+          ? "border-[#6e0e1e] bg-[#6e0e1e0d] ring-2 ring-[#6e0e1e33]"
+          : "border-border/60"
+      }`}
+    >
+      <div
+        className={`font-display tabular-nums leading-none tracking-[-0.01em] ${
+          hasUpload
+            ? "text-[34px] font-extrabold text-[#6e0e1e]"
+            : "text-[34px] font-extrabold text-muted-foreground/60"
+        }`}
+      >
+        {hasUpload ? value : "—"}
+      </div>
+      <div className="mt-2 flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.18em] text-[#6e0e1e]">
+        <span
+          className={`inline-block h-1.5 w-1.5 rounded-full ${
+            hasUpload ? "bg-[#6e0e1e]" : "bg-muted-foreground/40"
+          }`}
+        />
+        {hasUpload ? "uploaded assets" : "assets"}
+      </div>
+    </motion.div>
   );
 }

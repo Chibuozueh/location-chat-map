@@ -102,6 +102,11 @@ function LandingInner() {
       <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-6 md:px-6">
         <AtlasHero
           total={top?.counts.total ?? totalVisible}
+          uploadedCount={
+            importedState.filename
+              ? Math.max(0, importedState.totalParsed - importedState.rejected)
+              : null
+          }
           openNow={top?.counts.openNow ?? 0}
           avgRating={top?.counts.avgRating ?? 0}
           cities={top?.cities ?? []}
