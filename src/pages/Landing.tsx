@@ -55,13 +55,25 @@ function LandingInner() {
     }
   }, [seeded, seedMut]);
 
-  const merged = useMemo<(LocationDoc | AtlasAsset)[]>(
-    () => mergeAssets(seeded, importedState.rows),
-    [seeded, importedState.rows],
+  const merged = useMemo<{
+    mappable: (LocationDoc | AtlasAsset)[];
+    chatOnly: (LocationDoc | AtlasAsset)[];
+  }>(
+    () =>
+      mergeAssets(
+        seeded,
+        importedState.rows,
+        [
+          ...importedState.pending.map((p) => p.doc),
+          ...importedState.failed.map((f) => f.doc),
+        ],
+      ),
+    [seeded, importedState.rows, importedState.pending, importedState.failed],
   );
 
   const selectedDoc = useMemo(
-    () => merged.find((l) => l.slug === selected) ?? null,
+    () =>
+      [...merged.mappable, ...merged.chatOnly].find((l) => l.slug === selected) ?? null,
     [merged, selected],
   );
 
@@ -69,12 +81,14 @@ function LandingInner() {
     exploreRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  const totalVisible = merged.mappable.length + merged.chatOnly.length;
+
   return (
     <div className="min-h-screen w-full">
       <AppHeader />
       <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-6 md:px-6">
         <AtlasHero
-          total={top?.counts.total ?? merged.length}
+          total={top?.counts.total ?? totalVisible}
           openNow={top?.counts.openNow ?? 0}
           avgRating={top?.counts.avgRating ?? 0}
           cities={top?.cities ?? []}
@@ -123,13 +137,13 @@ function LandingInner() {
 
             {view === "map" ? (
               <MapView
-                locations={merged as LocationDoc[]}
+                locations={merged.mappable as LocationDoc[]}
                 selectedSlug={selected}
                 onSelect={setSelected}
               />
             ) : (
               <LocationGrid
-                locations={merged as LocationDoc[]}
+                locations={[...merged.mappable, ...merged.chatOnly] as LocationDoc[]}
                 selectedSlug={selected}
                 onSelect={setSelected}
               />

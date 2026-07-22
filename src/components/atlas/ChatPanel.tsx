@@ -104,10 +104,21 @@ export function ChatPanel(props: {
     useImportedData();
 
   const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
-  const hasImports = importedState.rows.length > 0;
-  const merged = useMemo<(LocationDoc | AtlasAsset)[]>(
-    () => mergeAssets(seeded, importedState.rows),
-    [seeded, importedState.rows],
+  const hasImports =
+    importedState.rows.length > 0 ||
+    importedState.pending.length > 0 ||
+    importedState.failed.length > 0;
+  const merged = useMemo<{
+    mappable: (LocationDoc | AtlasAsset)[];
+    chatOnly: (LocationDoc | AtlasAsset)[];
+  }>(
+    () =>
+      mergeAssets(
+        seeded,
+        importedState.rows,
+        [...importedState.pending.map((p) => p.doc), ...importedState.failed.map((f) => f.doc)],
+      ),
+    [seeded, importedState.rows, importedState.pending, importedState.failed],
   );
 
   // Server-side query – only when no upload is loaded.
@@ -121,7 +132,10 @@ export function ChatPanel(props: {
   // Client-side local search – only when an upload is loaded.
   const resultLocal = useMemo<SearchResponse | undefined>(() => {
     if (!hasImports || !pendingQuestion) return undefined;
-    return searchRows(merged as any, pendingQuestion);
+    return searchRows(
+      [...merged.mappable, ...merged.chatOnly] as any,
+      pendingQuestion,
+    );
   }, [hasImports, pendingQuestion, merged]);
 
   const result = (resultLocal ?? resultServer) as SearchResponse | undefined;
@@ -214,7 +228,7 @@ export function ChatPanel(props: {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading {hasImports ? `${merged.length} merged assets (upload + curated)` : "12 curated Southwest Atlanta assets"}
+            Reading {hasImports ? `${merged.mappable.length + merged.chatOnly.length} merged assets (upload + curated)` : "12 curated Southwest Atlanta assets"}
           </div>
         </div>
         <div className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -223,34 +237,89 @@ export function ChatPanel(props: {
         </div>
       </div>
 
-      {/* imported-file chip */}
+      {/* imported-file chip + geocode progress */}
       <AnimatePresence>
         {importedState.filename && (
           <motion.div
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
-            className="mx-3 mt-3 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent-foreground"
+            className="mx-3 mt-3 flex flex-col gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
           >
-            <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
-            <span className="truncate font-medium text-foreground">
-              {importedState.filename}
-            </span>
-            <span className="text-muted-foreground">
-              · {importedState.rows.length} rows
-            </span>
-            {importedState.rejected > 0 && (
-              <span className="text-muted-foreground">
-                · {importedState.rejected} skipped
+            <div className="flex items-center gap-2 text-accent-foreground">
+              <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
+              <span className="truncate font-medium text-foreground">
+                {importedState.filename}
               </span>
+              <span className="text-muted-foreground">
+                · {importedState.rows.length} mapped
+              </span>
+              {importedState.pending.length > 0 && (
+                <span className="text-muted-foreground">
+                  · {importedState.pending.length} geocoding
+                </span>
+              )}
+              {importedState.failed.length > 0 && (
+                <span className="text-muted-foreground">
+                  · {importedState.failed.length} ungeocodable
+                </span>
+              )}
+              {importedState.rejected > 0 && (
+                <span className="text-muted-foreground">
+                  · {importedState.rejected} skipped
+                </span>
+              )}
+              <button
+                onClick={clear}
+                className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+                aria-label="Clear import"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            {importedState.progress.total > 0 && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span
+                  className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
+                  aria-hidden
+                />
+                <span className="tabular-nums">
+                  Geocoding {importedState.progress.done}/{importedState.progress.total}
+                </span>
+                {importedState.progress.cached > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.cached} cached
+                  </span>
+                )}
+                {importedState.progress.fetched > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.fetched} fetched
+                  </span>
+                )}
+                {importedState.progress.failed > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.failed} couldn't be located
+                  </span>
+                )}
+                <span
+                  className="ml-auto h-1 grow-0 rounded-full bg-border"
+                  style={{ flexBasis: 80 }}
+                >
+                  <span
+                    className="block h-1 rounded-full bg-accent transition-all"
+                    style={{
+                      width: `${
+                        importedState.progress.total
+                          ? (importedState.progress.done /
+                              importedState.progress.total) *
+                            100
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </span>
+              </div>
             )}
-            <button
-              onClick={clear}
-              className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
-              aria-label="Clear import"
-            >
-              <X className="h-3 w-3" />
-            </button>
           </motion.div>
         )}
       </AnimatePresence>

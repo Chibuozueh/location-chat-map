@@ -1,10 +1,14 @@
 // Vanilla RFC4180-style CSV/TSV parser + smart column-alias mapping for the
 // atlas spreadsheet. No third-party dependency. Cap at 1000 rows.
+//
+// In addition to producing ready-to-map rows (with valid lat/lng), the parser
+// returns a separate `pending` list for rows that are otherwise valid but
+// lack coordinates. These rows are still searchable in the chat; a separate
+// geocode pass converts them to lat/lng afterwards.
 
 const MAX_ROWS = 1000;
 
-/** Public, share-friendly shape for an imported (non-DB) asset. The ChatPanel
- *  and MapView can render this directly; we don't need a real `_id`. */
+/** Final, fully-mapped asset with coords. */
 export type AtlasAsset = {
   _id: string;
   _creationTime: number;
@@ -21,6 +25,7 @@ export type AtlasAsset = {
   state: string;
   country: string;
   postalCode: string;
+  /** NaN until a row is geocoded; downstream code filters with isFinite(). */
   lat: number;
   lng: number;
   hours: {
@@ -38,6 +43,19 @@ export type AtlasAsset = {
   ownerName?: string;
   imageUrl?: string;
   accentColor?: string;
+  /** True iff this row lacks lat/lng and needs geocoding before mapping. */
+  needsGeocode?: boolean;
+  /** Cache key for client-side de-duplication. */
+  geoKey?: string;
+};
+
+/** Address fragment passed verbatim to Nominatim. */
+export type AddressFragment = {
+  street: string;
+  city: string;
+  state: string;
+  postalcode: string;
+  country: string;
 };
 
 export type ImportedRow = {
@@ -46,9 +64,10 @@ export type ImportedRow = {
 };
 
 export type ImportSummary = {
-  rows: ImportedRow[];
+  rows: ImportedRow[]; // rows with valid lat/lng
+  pending: ImportedRow[]; // rows missing lat/lng but otherwise valid
   totalParsed: number;
-  rejected: number;
+  rejected: number; // unrecoverable (no name, etc.)
   filename: string;
 };
 
@@ -235,6 +254,18 @@ const ALIASES: Record<string, string[]> = {
   accentColor: ["accent_color", "color", "accent"],
 };
 
+/** Canonical key the client uses to dedupe geocode requests. */
+export function geoKeyFor(addr: AddressFragment): string {
+  return [
+    addr.street.trim().toLowerCase(),
+    addr.city.trim().toLowerCase(),
+    addr.state.trim().toLowerCase(),
+    addr.postalcode.trim().toLowerCase(),
+  ]
+    .filter(Boolean)
+    .join("|");
+}
+
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[\s_-]+/g, "").trim();
 }
@@ -334,6 +365,16 @@ function splitFeatures(s: string): string[] {
     .filter(Boolean);
 }
 
+function makeAddressFragment(get: (f: string) => string): AddressFragment {
+  return {
+    street: get("address") || get("street") || "",
+    city: get("city") || "",
+    state: get("state") || "",
+    postalcode: get("postalCode") || "",
+    country: get("country") || "USA",
+  };
+}
+
 export function importCsv(
   text: string,
   filename = "uploaded.csv",
@@ -341,7 +382,7 @@ export function importCsv(
   const delimiter = detectDelimiter(text);
   const grid = parseDelimited(text, delimiter);
   if (grid.length < 2) {
-    return { rows: [], totalParsed: 0, rejected: 0, filename };
+    return { rows: [], pending: [], totalParsed: 0, rejected: 0, filename };
   }
 
   const headers = grid[0];
@@ -353,6 +394,7 @@ export function importCsv(
 
   const dataRows = grid.slice(1);
   const out: ImportedRow[] = [];
+  const pending: ImportedRow[] = [];
   let rejected = 0;
 
   const slice = dataRows.slice(0, MAX_ROWS);
@@ -363,10 +405,7 @@ export function importCsv(
       fieldIdx[f] !== undefined ? (r[fieldIdx[f]] ?? "").trim() : "";
 
     const name = get("name");
-    const lat = parseFloat(get("lat"));
-    const lng = parseFloat(get("lng"));
-
-    if (!name || Number.isNaN(lat) || Number.isNaN(lng)) {
+    if (!name) {
       rejected++;
       continue;
     }
@@ -386,8 +425,13 @@ export function importCsv(
 
     const warnings: string[] = [];
     const features = splitFeatures(get("features"));
-    if (!features.length) warnings.push("no features");
 
+    const latParsed = parseFloat(get("lat"));
+    const lngParsed = parseFloat(get("lng"));
+    const hasCoords =
+      Number.isFinite(latParsed) && Number.isFinite(lngParsed);
+
+    const addr = makeAddressFragment(get);
     const doc: AtlasAsset = {
       _id: `imported:${slug}`,
       _creationTime: Date.now(),
@@ -399,13 +443,13 @@ export function importCsv(
       reviewCount,
       priceTier,
       description: get("description"),
-      address: get("address"),
-      city: get("city") || "Atlanta",
-      state: get("state") || "GA",
-      country: get("country") || "USA",
-      postalCode: get("postalCode"),
-      lat,
-      lng,
+      address: addr.street,
+      city: addr.city || "Atlanta",
+      state: addr.state || "GA",
+      country: addr.country || "USA",
+      postalCode: addr.postalcode,
+      lat: hasCoords ? latParsed : NaN,
+      lng: hasCoords ? lngParsed : NaN,
       hours: defaultHours(),
       features,
       openedYear,
@@ -415,11 +459,28 @@ export function importCsv(
       accentColor: get("accentColor") || undefined,
     };
 
-    out.push({ doc, warnings });
+    const row: ImportedRow = { doc, warnings };
+
+    if (hasCoords) {
+      if (!features.length) warnings.push("no features");
+      out.push(row);
+    } else {
+      // Has name and address but no coords — slated for geocoding.
+      if (!addr.street && !addr.postalcode) {
+        warnings.push("no address or postal code for geocoding");
+      } else {
+        warnings.push("awaiting geocoding");
+      }
+      doc.address = addr.street;
+      doc.needsGeocode = true;
+      doc.geoKey = geoKeyFor(addr);
+      pending.push(row);
+    }
   }
 
   return {
     rows: out,
+    pending,
     totalParsed: dataRows.length,
     rejected,
     filename,
