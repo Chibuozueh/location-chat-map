@@ -9,12 +9,19 @@ import { MapView } from "@/components/atlas/MapView";
 import { ChatPanel } from "@/components/atlas/ChatPanel";
 import { LocationCard } from "@/components/atlas/LocationCard";
 import { LocationGrid } from "@/components/atlas/LocationGrid";
+import {
+  ImportedDataProvider,
+  mergeAssets,
+  useImportedData,
+} from "@/state/imported-data";
 import type { LocationDoc } from "@/components/atlas/types";
+import type { AtlasAsset } from "@/lib/csv-import";
 
-export default function Landing() {
-  const locations = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
+function LandingInner() {
+  const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
   const top = useQuery(api.locations.topPicks);
-  const seed = useMutation(api.locations.seed);
+  const seedMut = useMutation(api.locations.seed);
+  const { state: importedState } = useImportedData();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"map" | "sheet">("map");
@@ -25,7 +32,7 @@ export default function Landing() {
   const migratedRef = useRef(false);
   useEffect(() => {
     if (migratedRef.current) return;
-    if (locations === undefined) return;
+    if (seeded === undefined) return;
     migratedRef.current = true;
     const oldSlugs = new Set([
       "stumptown-hawthorne",
@@ -42,16 +49,20 @@ export default function Landing() {
       "verdant-tea",
     ]);
     const needsMigration =
-      locations.length === 0 ||
-      locations.some((l) => oldSlugs.has(l.slug));
+      seeded.length === 0 || seeded.some((l) => oldSlugs.has(l.slug));
     if (needsMigration) {
-      seed({ force: locations.length > 0 }).catch(() => {});
+      seedMut({ force: seeded.length > 0 }).catch(() => {});
     }
-  }, [locations, seed]);
+  }, [seeded, seedMut]);
+
+  const merged = useMemo<(LocationDoc | AtlasAsset)[]>(
+    () => mergeAssets(seeded, importedState.rows),
+    [seeded, importedState.rows],
+  );
 
   const selectedDoc = useMemo(
-    () => locations.find((l) => l.slug === selected) ?? null,
-    [locations, selected],
+    () => merged.find((l) => l.slug === selected) ?? null,
+    [merged, selected],
   );
 
   function scrollToMap() {
@@ -63,14 +74,17 @@ export default function Landing() {
       <AppHeader />
       <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-6 md:px-6">
         <AtlasHero
-          total={top?.counts.total ?? locations.length}
+          total={top?.counts.total ?? merged.length}
           openNow={top?.counts.openNow ?? 0}
           avgRating={top?.counts.avgRating ?? 0}
           cities={top?.cities ?? []}
           onExplore={scrollToMap}
         />
 
-        <div ref={exploreRef} className="mt-8 grid gap-4 md:mt-10 md:gap-6 lg:grid-cols-[1.5fr_1fr]">
+        <div
+          ref={exploreRef}
+          className="mt-8 grid gap-4 md:mt-10 md:gap-6 lg:grid-cols-[1.5fr_1fr]"
+        >
           {/* Left: view toggle + Map/Sheet */}
           <section className="flex min-h-[560px] flex-col">
             <div className="mb-3 flex items-center gap-2">
@@ -99,7 +113,7 @@ export default function Landing() {
                 </button>
               </div>
               <div className="hidden text-[11px] text-muted-foreground sm:block">
-                Click a pin or chat citation to focus a café
+                Click a pin or chat citation to focus an asset
               </div>
               <div className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
@@ -109,13 +123,13 @@ export default function Landing() {
 
             {view === "map" ? (
               <MapView
-                locations={locations}
+                locations={merged as LocationDoc[]}
                 selectedSlug={selected}
                 onSelect={setSelected}
               />
             ) : (
               <LocationGrid
-                locations={locations}
+                locations={merged as LocationDoc[]}
                 selectedSlug={selected}
                 onSelect={setSelected}
               />
@@ -128,12 +142,12 @@ export default function Landing() {
           </aside>
         </div>
 
-        {/* Detail drawer — only when a city is focused */}
+        {/* Detail drawer */}
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-20 flex justify-center px-4">
           <AnimatePresence>
             {selectedDoc && (
               <LocationCard
-                loc={selectedDoc}
+                loc={selectedDoc as LocationDoc}
                 onClose={() => setSelected(null)}
               />
             )}
@@ -144,7 +158,8 @@ export default function Landing() {
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
           <div>
             Atlanta Atlas · a sample community-asset experience demonstrating a
-            map + AI chat that reads structured location data.
+            map + AI chat that reads structured location data (curated set + your
+            CSV uploads).
           </div>
           <div className="flex items-center gap-3">
             <span>
@@ -171,5 +186,13 @@ export default function Landing() {
         </footer>
       </main>
     </div>
+  );
+}
+
+export default function Landing() {
+  return (
+    <ImportedDataProvider>
+      <LandingInner />
+    </ImportedDataProvider>
   );
 }

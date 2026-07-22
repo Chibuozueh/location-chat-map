@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, MapPin, Sparkles } from "lucide-react";
+import { ArrowUp, FileSpreadsheet, Loader2, MapPin, Sparkles, X } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -12,6 +12,9 @@ import {
   type LocationDoc,
   type SearchResponse,
 } from "./types";
+import { searchRows } from "@/lib/atlas-search";
+import { useImportedData, mergeAssets } from "@/state/imported-data";
+import type { AtlasAsset } from "@/lib/csv-import";
 
 const SUGGESTIONS = [
   "Which asset has the highest community score?",
@@ -89,37 +92,66 @@ export function ChatPanel(props: {
       id: "welcome",
       role: "atlas",
       content:
-        "I can answer questions about the community assets in the Atlanta Atlas — try asking about category, hours, accessibility, or cost.",
+        "I can answer questions about the community assets in the Atlanta Atlas — try asking about category, hours, accessibility, or cost. You can also upload your own spreadsheet of locations and chat over those.",
       matched: [],
     },
   ]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const result = useQuery(
+  const { state: importedState, importFromFile, importing, clear } =
+    useImportedData();
+
+  const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
+  const hasImports = importedState.rows.length > 0;
+  const merged = useMemo<(LocationDoc | AtlasAsset)[]>(
+    () => mergeAssets(seeded, importedState.rows),
+    [seeded, importedState.rows],
+  );
+
+  // Server-side query – only when no upload is loaded.
+  const resultServer = useQuery(
     api.locations.search,
-    pendingQuestion ? { question: pendingQuestion } : ("skip" as any),
+    !hasImports && pendingQuestion
+      ? { question: pendingQuestion }
+      : ("skip" as any),
   ) as SearchResponse | undefined;
 
+  // Client-side local search – only when an upload is loaded.
+  const resultLocal = useMemo<SearchResponse | undefined>(() => {
+    if (!hasImports || !pendingQuestion) return undefined;
+    return searchRows(merged as any, pendingQuestion);
+  }, [hasImports, pendingQuestion, merged]);
+
+  const result = (resultLocal ?? resultServer) as SearchResponse | undefined;
   const isLoading = pendingQuestion !== null && result === undefined;
 
-  function submit(text: string) {
-    const q = text.trim();
-    if (!q) return;
-    setMessages((prev) => [
-      ...prev,
-      { id: newId(), role: "user", content: q },
-      {
-        id: newId(),
-        role: "atlas",
-        content: "",
-        pending: true,
-        matched: [],
-      },
-    ]);
-    setPendingQuestion(q);
-    setInput("");
-  }
+  // Reset the welcome message if the user imports data so the next "thanks"
+  // hint reflects what the chat is reading over.
+  const lastImportSig = importedState.importedAt;
+  useEffect(() => {
+    if (!lastImportSig) return;
+    setMessages((prev) => {
+      const i = prev.findIndex(
+        (m) => m.role === "user" && prev[prev.length - 1]?.id !== m.id,
+      );
+      // Append a system note for clarity; idempotent on signature.
+      const stamp = `import:${lastImportSig}`;
+      if (prev.some((m) => (m as any)._stamp === stamp)) return prev;
+      const filename = importedState.filename ?? "your spreadsheet";
+      return [
+        ...prev,
+        {
+          id: stamp,
+          role: "atlas",
+          content: `Now reading ${importedState.rows.length} ${importedState.rows.length === 1 ? "row" : "rows"} from ${filename} — ask me anything about those assets.`,
+          matched: [],
+        } as any,
+      ];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastImportSig, importedState.filename, importedState.rows.length]);
 
   useEffect(() => {
     if (!pendingQuestion || !result) return;
@@ -145,11 +177,29 @@ export function ChatPanel(props: {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages.length, isLoading]);
 
+  function submit(text: string) {
+    const q = text.trim();
+    if (!q) return;
+    setMessages((prev) => [
+      ...prev,
+      { id: newId(), role: "user", content: q },
+      { id: newId(), role: "atlas", content: "", pending: true, matched: [] },
+    ]);
+    setPendingQuestion(q);
+    setInput("");
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit(input);
     }
+  }
+
+  function handleFile(file: File | null) {
+    if (!file) return;
+    void importFromFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   return (
@@ -164,7 +214,7 @@ export function ChatPanel(props: {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading the spreadsheet of Southwest Atlanta assets
+            Reading {hasImports ? `${merged.length} merged assets (upload + curated)` : "12 curated Southwest Atlanta assets"}
           </div>
         </div>
         <div className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -172,6 +222,38 @@ export function ChatPanel(props: {
           live
         </div>
       </div>
+
+      {/* imported-file chip */}
+      <AnimatePresence>
+        {importedState.filename && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            className="mx-3 mt-3 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent-foreground"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
+            <span className="truncate font-medium text-foreground">
+              {importedState.filename}
+            </span>
+            <span className="text-muted-foreground">
+              · {importedState.rows.length} rows
+            </span>
+            {importedState.rejected > 0 && (
+              <span className="text-muted-foreground">
+                · {importedState.rejected} skipped
+              </span>
+            )}
+            <button
+              onClick={clear}
+              className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+              aria-label="Clear import"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* messages */}
       <div
@@ -188,7 +270,9 @@ export function ChatPanel(props: {
             <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.3s]" />
             <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.15s]" />
             <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
-            <span className="ml-1">searching the atlas…</span>
+            <span className="ml-1">
+              {hasImports ? "searching the merged atlas…" : "searching the atlas…"}
+            </span>
           </div>
         )}
       </div>
@@ -208,28 +292,56 @@ export function ChatPanel(props: {
         </div>
       </div>
 
-      {/* input */}
+      {/* input + import */}
       <div className="border-t border-border/60 p-3">
-        <div className="relative flex items-end gap-2 rounded-xl border border-border/70 bg-background/60 p-1.5 shadow-card focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-ring/30">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about categories, hours, accessibility, cost…"
-            rows={1}
-            className="min-h-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[13.5px] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-          />
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => submit(input)}
-            disabled={!input.trim()}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
-            aria-label="Send message"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border/70 bg-background/60 px-3 text-[12px] font-medium text-muted-foreground transition hover:border-accent/60 hover:text-foreground disabled:opacity-50"
+            title="Upload a CSV or TSV spreadsheet of asset locations"
           >
-            <ArrowUp className="h-4 w-4" />
+            {importing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+            )}
+            Import CSV
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+          />
+          <div className="relative flex flex-1 items-end gap-2 rounded-xl border border-border/70 bg-background/60 p-1.5 shadow-card focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-ring/30">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                hasImports
+                  ? "Ask about your uploaded locations…"
+                  : "Ask about categories, hours, accessibility, cost…"
+              }
+              rows={1}
+              className="min-h-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[13.5px] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+            <button
+              onClick={() => submit(input)}
+              disabled={!input.trim()}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
+              aria-label="Send message"
+            >
+              <ArrowUp className="h-4 w-4" />
+            </button>
+          </div>
         </div>
         <div className="mt-1.5 px-1.5 text-[10.5px] text-muted-foreground">
-          Press <kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> to send · <kbd className="rounded border border-border/60 px-1.5 py-px">Shift</kbd>+<kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> for newline
+          Press <kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> to send · <kbd className="rounded border border-border/60 px-1.5 py-px">Shift</kbd>+<kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> for newline · CSV upload reads columns{" "}
+          <span className="text-foreground/80">Name, Address, Lat, Lng, Category, Features…</span>
         </div>
       </div>
     </div>
