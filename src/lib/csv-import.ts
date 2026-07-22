@@ -53,13 +53,56 @@ export type ImportSummary = {
 };
 
 // Each field lists header strings that map onto it. Comparison normalizes
-// spaces / hyphens / case so e.g. "Hours Mon" == "hours_mon" == "HourseMon".
+// spaces / hyphens / punctuation / case so e.g. "Hours Mon" == "hours_mon" ==
+// "HourseMon" == "SubrecipientName / Organization".
 const ALIASES: Record<string, string[]> = {
+  // Identity
   slug: ["slug", "id", "uid", "uuid", "key"],
-  name: ["name", "title", "facility", "asset", "site", "place", "label"],
+
+  // Name — covers HUD/grant-style "Subrecipient Name", "Organization",
+  // grant-program names, etc.
+  name: [
+    "name",
+    "title",
+    "facility",
+    "asset",
+    "site",
+    "place",
+    "label",
+    "subrecipient",
+    "sub_recipient",
+    "subrecipient_name",
+    "subrecipientname",
+    "organization",
+    "org_name",
+    "organisation",
+    "agency",
+    "recipient",
+    "program_name",
+    "grantee",
+  ],
+
   tagline: ["tagline", "subtitle", "summary", "short", "short_description"],
-  category: ["category", "type", "kind", "classification", "asset_type"],
+
+  // Category — covers "Community Asset Type", "Asset Type", etc.
+  category: [
+    "category",
+    "type",
+    "kind",
+    "classification",
+    "asset_type",
+    "asset_type_category",
+    "asset_type_name",
+    "community_asset_type",
+    "community_asset",
+    "program_type",
+    "service_type",
+  ],
+
+  // Numeric score
   rating: ["rating", "score", "stars", "community_score"],
+
+  // Engagement / reach
   reviewCount: [
     "review_count",
     "reviews",
@@ -69,21 +112,126 @@ const ALIASES: Record<string, string[]> = {
     "monthly",
     "attendance",
     "weekly_visits",
+    "people_served",
+    "persons_served",
+    "served",
+    "households_served",
+    "households",
+    "current",
+    "current_count",
+    "current_clients",
+    "active",
   ],
+
   priceTier: ["price_tier", "price", "cost", "cost_tier", "fee"],
-  description: ["description", "desc", "about", "notes", "details", "summary_long"],
-  address: ["address", "street", "location", "street_address"],
-  city: ["city", "town"],
-  state: ["state", "region", "province"],
+
+  // Long-form notes — aliases cover HUD-grant colloquialisms.
+  description: [
+    "description",
+    "desc",
+    "about",
+    "notes",
+    "notes_observations",
+    "notes_&_observations",
+    "details",
+    "summary_long",
+    "service_resources_available",
+    "service_resources",
+    "service_resources_description",
+    "resources_available",
+    "resources",
+    "activity",
+    "activities",
+    "issue_and_needs",
+    "issue_needs",
+    "issue_needs_addressed",
+    "issue_needs_summary",
+    "issue",
+    "needs",
+    "need",
+  ],
+
+  // Address — combined street address; alt: append county to address.
+  address: [
+    "address",
+    "street",
+    "location",
+    "street_address",
+    "street_address_full",
+    "site_address",
+    "facility_address",
+    "physical_address",
+  ],
+  city: ["city", "town", "municipality", "locality"],
+  state: ["state", "region", "province", "st"],
   country: ["country", "country_name"],
-  postalCode: ["zip", "postal_code", "postal", "postcode", "zip_code"],
-  lat: ["lat", "latitude", "y"],
-  lng: ["lng", "long", "longitude", "lon", "x"],
-  features: ["features", "tags", "amenities"],
-  openedYear: ["opened_year", "year", "since", "founded"],
-  signatureDrink: ["signature", "program", "signature_program", "specialty"],
-  ownerName: ["owner", "operator", "org", "organization"],
-  imageUrl: ["image", "image_url", "photo", "picture"],
+  county: ["county", "parish", "borough"],
+  postalCode: [
+    "zip",
+    "zip_code",
+    "zipcode",
+    "postal",
+    "postal_code",
+    "postalcode",
+    "postcode",
+  ],
+
+  lat: ["lat", "latitude", "y", "y_lat", "coord_lat"],
+  lng: ["lng", "long", "longitude", "lon", "x", "x_lng", "coord_long"],
+
+  // Features — grant-style tags ("Nat'l Goal", HUD national goals)
+  features: [
+    "features",
+    "tags",
+    "amenities",
+    "natl_goal",
+    "national_goal",
+    "natl_goals",
+    "nat_goal",
+    "goals",
+    "objective",
+    "objectives",
+  ],
+
+  openedYear: [
+    "opened_year",
+    "year",
+    "since",
+    "founded",
+    "contract_period",
+    "contract_start",
+    "contract_year",
+    "year_established",
+    "start_year",
+  ],
+
+  signatureDrink: [
+    "signature",
+    "program",
+    "signature_program",
+    "specialty",
+    "project",
+    "project_hud",
+    "project_id",
+    "hud_project",
+    "project_name",
+    "hud_grant_id",
+    "grant_id",
+    "grant",
+  ],
+
+  ownerName: [
+    "owner",
+    "operator",
+    "org",
+    "organization",
+    "owner_name",
+    "agency_name",
+    "subrecipient_organization",
+    "operating_agency",
+    "operator_org",
+  ],
+  imageUrl: ["image", "image_url", "photo", "picture", "photo_url"],
   accentColor: ["accent_color", "color", "accent"],
 };
 
