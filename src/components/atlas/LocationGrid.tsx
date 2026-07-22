@@ -16,22 +16,22 @@ export function LocationGrid(props: {
             Curated directory
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            {locations.length} cafés · sorted by rating
+            {locations.length} assets · sorted by community score
           </div>
         </div>
         <div className="hidden gap-2 text-[10px] text-muted-foreground sm:flex">
           <span className="rounded border border-border/60 px-2 py-0.5">
-            ⌘F to filter
+            Sheet view
           </span>
         </div>
       </div>
       <div className="max-h-full overflow-y-auto">
         <div className="hidden grid-cols-[1.6fr_1fr_0.5fr_0.5fr_0.5fr] gap-3 border-b border-border/60 px-4 py-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground sm:grid">
-          <div>Name</div>
+          <div>Asset</div>
           <div>Category</div>
-          <div>Rating</div>
-          <div>Price</div>
-          <div>Year</div>
+          <div>Score</div>
+          <div>Cost</div>
+          <div>Since</div>
         </div>
         <ul className="divide-y divide-border/60">
           {locations.map((l, i) => {
@@ -52,7 +52,7 @@ export function LocationGrid(props: {
                   <span className="flex items-center gap-2.5">
                     <span
                       className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[12px] font-semibold text-white"
-                      style={{ background: l.accentColor || "#8A4A2E" }}
+                      style={{ background: l.accentColor || "#A47551" }}
                     >
                       {l.name.charAt(0)}
                     </span>
@@ -76,7 +76,7 @@ export function LocationGrid(props: {
                     </span>
                   </span>
                   <span className="hidden tabular-nums text-muted-foreground sm:block">
-                    {PRICE_SYMBOL[l.priceTier] ?? "$"}
+                    {PRICE_SYMBOL[l.priceTier] ?? "—"}
                   </span>
                   <span className="hidden tabular-nums text-muted-foreground sm:block">
                     {l.openedYear}

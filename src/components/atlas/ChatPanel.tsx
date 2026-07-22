@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, Coffee, Sparkles } from "lucide-react";
+import { ArrowUp, MapPin, Sparkles } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -14,12 +14,12 @@ import {
 } from "./types";
 
 const SUGGESTIONS = [
-  "Which is the highest-rated café?",
-  "Where can I get wifi and sit outside?",
-  "Show me cheap spots open right now",
-  "Tell me about Sterling Coffee",
-  "What about roasteries?",
-  "Quiet place to work with outlets",
+  "Which asset has the highest community score?",
+  "Where can I find a free library open today?",
+  "Show me transit-accessible clinics",
+  "Tell me about Wren's Nest",
+  "What about recreation centers?",
+  "Wheelchair-accessible park with restrooms",
 ];
 
 function newId() {
@@ -89,7 +89,7 @@ export function ChatPanel(props: {
       id: "welcome",
       role: "atlas",
       content:
-        "I can answer questions about the cafés in the atlas — try asking about ratings, hours, features, or pricing.",
+        "I can answer questions about the community assets in the Atlanta Atlas — try asking about category, hours, accessibility, or cost.",
       matched: [],
     },
   ]);
@@ -121,7 +121,6 @@ export function ChatPanel(props: {
     setInput("");
   }
 
-  // When search returns, update the last pending bot message.
   useEffect(() => {
     if (!pendingQuestion || !result) return;
     setMessages((prev) => {
@@ -140,7 +139,6 @@ export function ChatPanel(props: {
     setPendingQuestion(null);
   }, [pendingQuestion, result]);
 
-  // Auto-scroll on new messages.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -159,14 +157,14 @@ export function ChatPanel(props: {
       {/* header */}
       <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent/15 text-accent">
-          <Coffee className="h-3.5 w-3.5" />
+          <MapPin className="h-3.5 w-3.5" />
         </span>
         <div className="leading-tight">
           <div className="text-[12.5px] font-semibold tracking-[-0.005em]">
-            Atlas Assistant
+            Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading the spreadsheet of curated cafés
+            Reading the spreadsheet of Southwest Atlanta assets
           </div>
         </div>
         <div className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -217,7 +215,7 @@ export function ChatPanel(props: {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about ratings, hours, features, pricing…"
+            placeholder="Ask about categories, hours, accessibility, cost…"
             rows={1}
             className="min-h-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[13.5px] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
           />

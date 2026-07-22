@@ -20,12 +20,34 @@ export default function Landing() {
   const [view, setView] = useState<"map" | "sheet">("map");
   const exploreRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-seed once on first mount if the table is empty.
+  // Auto-seed once on first mount if the table is empty, OR if the existing
+  // rows are from the previous Portland-coffee seed (detected by old slugs).
+  const migratedRef = useRef(false);
   useEffect(() => {
-    if (locations.length === 0) {
-      seed({ force: false }).catch(() => {});
+    if (migratedRef.current) return;
+    if (locations === undefined) return;
+    migratedRef.current = true;
+    const oldSlugs = new Set([
+      "stumptown-hawthorne",
+      "heart-burnside",
+      "coava-pearl",
+      "proud-coffee-mississippi",
+      "sterling-coffee",
+      "case-study-alberta",
+      "teiph-matrix",
+      "sisters-bakery",
+      "floyd-coffee",
+      "good-coffee-broadway",
+      "roseway-roasters",
+      "verdant-tea",
+    ]);
+    const needsMigration =
+      locations.length === 0 ||
+      locations.some((l) => oldSlugs.has(l.slug));
+    if (needsMigration) {
+      seed({ force: locations.length > 0 }).catch(() => {});
     }
-  }, [locations.length, seed]);
+  }, [locations, seed]);
 
   const selectedDoc = useMemo(
     () => locations.find((l) => l.slug === selected) ?? null,
@@ -121,8 +143,8 @@ export default function Landing() {
         {/* Subtle footer */}
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
           <div>
-            Atlas · a sample experience demonstrating a map + AI chat that reads
-            structured location data.
+            Atlanta Atlas · a sample community-asset experience demonstrating a
+            map + AI chat that reads structured location data.
           </div>
           <div className="flex items-center gap-3">
             <span>

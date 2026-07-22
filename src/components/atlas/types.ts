@@ -3,35 +3,37 @@ import type { Doc } from "@/convex/_generated/dataModel";
 export type LocationDoc = Doc<"locations">;
 
 export const PRICE_SYMBOL: Record<number, string> = {
-  1: "$",
-  2: "$$",
-  3: "$$$",
+  0: "Free",
+  1: "Sliding",
+  2: "Paid",
+};
+
+export const PRICE_TONE: Record<number, string> = {
+  0: "Free — open to all",
+  1: "Sliding-scale",
+  2: "Paid service",
 };
 
 export const CATEGORY_LABEL: Record<string, string> = {
-  "espresso-bar": "Espresso bar",
-  "pour-over": "Pour-over",
-  brunch: "Brunch",
-  bakery: "Bakery",
-  roastery: "Roastery",
-  "tea-house": "Tea house",
-  "quick-serve": "Quick-serve",
+  park: "Park / green space",
+  "recreation-center": "Recreation center",
+  school: "School",
+  clinic: "Clinic",
+  library: "Library",
+  "community-center": "Community center",
+  museum: "Museum / heritage site",
+  transit: "Transit station",
 };
 
 export const FEATURE_LABEL: Record<string, string> = {
-  wifi: "Wi-Fi",
-  outdoor: "Outdoor seating",
-  "pet-friendly": "Pet friendly",
-  "power-outlets": "Power outlets",
-  quiet: "Quiet",
-};
-
-export const FEATURE_ICON: Record<string, "wifi" | "tree" | "paw" | "plug" | "volume"> = {
-  wifi: "wifi",
-  outdoor: "tree",
-  "pet-friendly": "paw",
-  "power-outlets": "plug",
-  quiet: "volume",
+  "public-wifi": "Public Wi-Fi",
+  "transit-accessible": "Transit accessible",
+  "wheelchair-accessible": "Wheelchair accessible",
+  "youth-programs": "Youth programs",
+  "senior-programs": "Senior programs",
+  restrooms: "Restrooms on-site",
+  "open-weekends": "Open weekends",
+  free: "Free to use",
 };
 
 export type ChatMessage = {
@@ -52,7 +54,7 @@ export type AtlasIntent = {
   wantCheapest: boolean;
   wantOpenNow: boolean;
   nameMention: string | null;
-  generalCoffee: boolean;
+  generalAsset: boolean;
   matchedSignals: string[];
 };
 

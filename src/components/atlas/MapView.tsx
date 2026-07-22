@@ -9,8 +9,13 @@ import {
   type LocationDoc,
 } from "./types";
 
+const DEFAULT_CENTER: [number, number] = [33.74, -84.45];
+const DEFAULT_ZOOM = 12;
+
 function makePinIcon(selected: boolean, accent: string, label: string) {
-  const fill = selected ? "oklch(0.235 0.01 50)" : accent || "oklch(0.62 0.124 50)";
+  const fill = selected
+    ? "oklch(0.235 0.01 50)"
+    : accent || "oklch(0.62 0.124 50)";
   const safeLabel = label.replace(/[<>&"]/g, "");
   return L.divIcon({
     html: `
@@ -28,7 +33,7 @@ function makePinIcon(selected: boolean, accent: string, label: string) {
 
 function FlyTo({
   center,
-  zoom = 14,
+  zoom,
 }: {
   center: [number, number];
   zoom?: number;
@@ -36,7 +41,7 @@ function FlyTo({
   const map = useMap();
   useEffect(() => {
     if (!center) return;
-    map.flyTo(center, zoom, { duration: 0.7, easeLinearity: 0.25 });
+    map.flyTo(center, zoom ?? 14, { duration: 0.7, easeLinearity: 0.25 });
   }, [center, zoom, map]);
   return null;
 }
@@ -48,15 +53,17 @@ export function MapView(props: {
 }) {
   const { locations, selectedSlug, onSelect } = props;
   const center = useMemo<[number, number]>(() => {
-    const sel = selectedSlug ? locations.find((l) => l.slug === selectedSlug) : null;
-    return sel ? [sel.lat, sel.lng] : [45.53, -122.65];
+    const sel = selectedSlug
+      ? locations.find((l) => l.slug === selectedSlug)
+      : null;
+    return sel ? [sel.lat, sel.lng] : DEFAULT_CENTER;
   }, [locations, selectedSlug]);
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-2xl border border-border/70 bg-card shadow-card">
       <MapContainer
-        center={[45.53, -122.65]}
-        zoom={12}
+        center={DEFAULT_CENTER}
+        zoom={DEFAULT_ZOOM}
         scrollWheelZoom
         className="h-full w-full"
         zoomControl={false}
@@ -70,7 +77,11 @@ export function MapView(props: {
         <FlyTo key={selectedSlug ?? "default"} center={center} />
         {locations.map((loc) => {
           const isSelected = loc.slug === selectedSlug;
-          const icon = makePinIcon(isSelected, loc.accentColor || "", loc.name);
+          const icon = makePinIcon(
+            isSelected,
+            loc.accentColor || "",
+            loc.name,
+          );
           return (
             <Marker
               key={loc.slug}
@@ -95,7 +106,7 @@ export function MapView(props: {
                       ({loc.reviewCount.toLocaleString()})
                     </span>
                     <span className="ml-auto text-muted-foreground">
-                      {PRICE_SYMBOL[loc.priceTier] ?? "$"}
+                      {PRICE_SYMBOL[loc.priceTier] ?? "—"}
                     </span>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1">
@@ -122,7 +133,7 @@ export function MapView(props: {
         className="pointer-events-none absolute left-4 top-4 flex items-center gap-2 rounded-full border border-border/60 bg-card/90 px-3 py-1.5 text-[11px] text-muted-foreground shadow-card backdrop-blur"
       >
         <span className="inline-block h-2 w-2 rounded-full bg-accent" />
-        {locations.length} curated spots · CartoDB Positron
+        {locations.length} assets · Southwest Atlanta
       </motion.div>
     </div>
   );

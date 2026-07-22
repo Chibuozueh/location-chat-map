@@ -17,10 +17,10 @@ export function AppHeader() {
           </motion.span>
           <div className="leading-tight">
             <div className="font-display text-[15px] font-semibold tracking-[-0.01em]">
-              Atlas
+              Atlanta Atlas
             </div>
             <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-              Craft café finder
+              Southwest ATL asset map
             </div>
           </div>
         </Link>
@@ -35,7 +35,7 @@ export function AppHeader() {
             to="/auth"
             className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-foreground shadow-card transition hover:bg-primary/95"
           >
-            Open Atlas
+            Explore Atlas
           </Link>
         </div>
       </div>
