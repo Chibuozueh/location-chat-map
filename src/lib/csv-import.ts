@@ -79,7 +79,7 @@ const ALIASES: Record<string, string[]> = {
   slug: ["slug", "id", "uid", "uuid", "key"],
 
   // Name — covers HUD/grant-style "Subrecipient Name", "Organization",
-  // grant-program names, etc.
+  // grant-program names, civic classes, etc.
   name: [
     "name",
     "title",
@@ -99,6 +99,60 @@ const ALIASES: Record<string, string[]> = {
     "recipient",
     "program_name",
     "grantee",
+    // Common variants for fitness / class / activity CSVs
+    "class",
+    "classname",
+    "class_name",
+    "classtitle",
+    "class_title",
+    "class_name_title",
+    "activity",
+    "activities",
+    "activityname",
+    "activity_name",
+    "service",
+    "services",
+    "servicename",
+    "service_name",
+    "course",
+    "coursename",
+    "course_name",
+    "session",
+    "sessiontitle",
+    "session_name",
+    "session_title",
+    "item",
+    "items",
+    "itemname",
+    "item_name",
+    "item_title",
+    "placename",
+    "place_name",
+    "locationname",
+    "location_name",
+    "sitename",
+    "site_name",
+    "facilityname",
+    "facility_name",
+    "titletext",
+    "assetname",
+    "asset_name",
+    "asset_title",
+    "programtitle",
+    "program_title",
+    "venue",
+    "venuename",
+    "venue_name",
+    "amenity",
+    "amenities",
+    "resource",
+    "resources",
+    "resourcename",
+    "resource_name",
+    "stop",
+    "stops",
+    "stationname",
+    "station_name",
   ],
 
   tagline: ["tagline", "subtitle", "summary", "short", "short_description"],
@@ -387,12 +441,28 @@ export function importCsv(
 
   const headers = grid[0];
   const fieldIdx: Record<string, number> = {};
-  headers.forEach((h, i) => {
+  // Skip blank title/section rows that some spreadsheet exports prepend.
+  const headerRow = grid.find((row, idx) =>
+    idx > 0 &&
+    row.filter((c) => c && c.trim() !== "").length >= 2 &&
+    row.some((c) => aliasIndexFor(c) !== null),
+  );
+  const effectiveHeaders = headerRow ?? headers;
+  // Track offset so dataRows starts after the header row we picked.
+  const headerOffset = headerRow ? grid.indexOf(headerRow) + 1 : 1;
+  effectiveHeaders.forEach((h, i) => {
     const f = aliasIndexFor(h);
     if (f && !(f in fieldIdx)) fieldIdx[f] = i;
   });
 
-  const dataRows = grid.slice(1);
+  // Fallback when no `name` header was recognized: use column A. Many civic
+  // / HUD spreadsheets put a name in the first column even when the
+  // header text isn't one we know (e.g. custom merged-cell labels).
+  if (fieldIdx["name"] === undefined) {
+    fieldIdx["name"] = 0;
+  }
+
+  const dataRows = grid.slice(headerOffset);
   const out: ImportedRow[] = [];
   const pending: ImportedRow[] = [];
   let rejected = 0;

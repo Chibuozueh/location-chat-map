@@ -117,8 +117,15 @@ export function ChatPanel(props: {
         seeded,
         importedState.rows,
         [...importedState.pending.map((p) => p.doc), ...importedState.failed.map((f) => f.doc)],
+        { replace: hasImports },
       ),
-    [seeded, importedState.rows, importedState.pending, importedState.failed],
+    [
+      seeded,
+      importedState.rows,
+      importedState.pending,
+      importedState.failed,
+      hasImports,
+    ],
   );
 
   // Server-side query – only when no upload is loaded.
@@ -228,7 +235,7 @@ export function ChatPanel(props: {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading {hasImports ? `${merged.mappable.length + merged.chatOnly.length} merged assets (upload + curated)` : "12 curated Southwest Atlanta assets"}
+            Reading {hasImports ? `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable)" : ""}from your uploaded file` : "12 curated Southwest Atlanta assets"}
           </div>
         </div>
         <div className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">

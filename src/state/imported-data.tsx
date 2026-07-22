@@ -145,13 +145,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       });
 
       // First message describes what just landed.
-      const skipped = summary.rejected + (pendingCount === 0 ? 0 : 0);
+      const skipped = summary.rejected;
+      const placed = readyCount;
       const pendingNote =
-        pendingCount > 0
-          ? ` · geocoding ${pendingCount}`
-          : "";
+        pendingCount > 0 ? ` · geocoding ${pendingCount}` : "";
       toast.success(
-        `Imported ${readyCount} ${readyCount === 1 ? "row" : "rows"} from ${file.name}` +
+        `Showing only your uploaded data: ${placed} ${placed === 1 ? "row" : "rows"} from ${file.name}` +
           (skipped ? ` · ${skipped} skipped` : "") +
           pendingNote,
       );
@@ -298,11 +297,16 @@ export type AnyAsset = LocationDoc | AtlasAsset;
 /** Union seeded + imported with the imported overriding seeded by slug
  *  (case-insensitive). Seeded order is preserved; brand-new imports append.
  *  Rows with non-finite lat/lng remain in `chatOnly` so the chat can still
- *  answer about them without showing ghost pins on the map. */
+ *  answer about them without showing ghost pins on the map.
+ *
+ *  Pass `replace: true` when the user wants their upload to fully replace
+ *  the curated default assets (e.g. a custom asset map). In replace mode
+ *  the seeded list is ignored and only uploaded rows are returned. */
 export function mergeAssets(
   seeded: LocationDoc[],
   imported: AtlasAsset[],
   chatOnly: AtlasAsset[] = [],
+  options: { replace?: boolean } = {},
 ): { mappable: AnyAsset[]; chatOnly: AnyAsset[] } {
   const importedByLower = new Map<string, AtlasAsset>();
   for (const i of imported) importedByLower.set(i.slug.toLowerCase(), i);
@@ -310,14 +314,16 @@ export function mergeAssets(
   const mappable: AnyAsset[] = [];
   const consumed = new Set<string>();
 
-  for (const s of seeded) {
-    const k = s.slug.toLowerCase();
-    const override = importedByLower.get(k);
-    if (override) {
-      mappable.push({ ...s, ...override });
-      consumed.add(k);
-    } else {
-      mappable.push(s);
+  if (!options.replace) {
+    for (const s of seeded) {
+      const k = s.slug.toLowerCase();
+      const override = importedByLower.get(k);
+      if (override) {
+        mappable.push({ ...s, ...override });
+        consumed.add(k);
+      } else {
+        mappable.push(s);
+      }
     }
   }
   for (const i of imported) {

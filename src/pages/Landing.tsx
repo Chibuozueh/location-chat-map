@@ -55,6 +55,12 @@ function LandingInner() {
     }
   }, [seeded, seedMut]);
 
+  const hasAnyImport =
+    importedState.rows.length +
+      importedState.pending.length +
+      importedState.failed.length >
+    0;
+
   const merged = useMemo<{
     mappable: (LocationDoc | AtlasAsset)[];
     chatOnly: (LocationDoc | AtlasAsset)[];
@@ -67,8 +73,15 @@ function LandingInner() {
           ...importedState.pending.map((p) => p.doc),
           ...importedState.failed.map((f) => f.doc),
         ],
+        { replace: hasAnyImport },
       ),
-    [seeded, importedState.rows, importedState.pending, importedState.failed],
+    [
+      seeded,
+      importedState.rows,
+      importedState.pending,
+      importedState.failed,
+      hasAnyImport,
+    ],
   );
 
   const selectedDoc = useMemo(
@@ -171,9 +184,10 @@ function LandingInner() {
         {/* Subtle footer */}
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
           <div>
-            Atlanta Atlas · a sample community-asset experience demonstrating a
-            map + AI chat that reads structured location data (curated set + your
-            CSV uploads).
+            Atlanta Atlas · showing {hasAnyImport
+              ? "only your uploaded spreadsheet"
+              : "the 12 curated Southwest Atlanta defaults"}
+            .
           </div>
           <div className="flex items-center gap-3">
             <span>
