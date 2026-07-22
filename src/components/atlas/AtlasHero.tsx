@@ -22,19 +22,19 @@ export function AtlasHero(props: {
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="inline-flex items-center gap-2 self-start rounded-full border border-border/60 bg-background/70 px-3 py-1 text-[11px] text-muted-foreground shadow-card backdrop-blur"
+            className="inline-flex items-center gap-2 self-start rounded-full border border-[#6e0e1e33] bg-paper/80 px-3 py-1 text-[11px] font-medium tracking-[0.06em] text-[#6e0e1e] shadow-card backdrop-blur"
           >
-            <Sparkles className="h-3 w-3 text-accent" />
-            Atlanta Atlas · Southwest ATL community asset map
+            <Sparkles className="h-3 w-3" />
+            Morehouse Atlas · Southwest Atlanta community assets
           </motion.div>
           <motion.h1
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 }}
-            className="mt-4 font-display text-balance text-[44px] font-semibold leading-[1.05] tracking-[-0.02em] md:text-[56px]"
+            className="mt-4 font-display text-balance text-[44px] font-semibold leading-[1.05] tracking-[-0.02em] text-[#0e0a0b] md:text-[56px]"
           >
             Map every
-            <span className="px-2 text-accent">community asset</span>
+            <span className="px-2 text-[#6e0e1e]">community asset</span>
             <br />
             across Southwest Atlanta.
           </motion.h1>

@@ -51,83 +51,87 @@
   --font-mono:
     "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
     Consolas, monospace;
+  --color-maroon: #6e0e1e;
+  --color-maroon-deep: #4f0814;
+  --color-paper: #faf7f2;
 }
 
-/* Modern theme: quiet warm neutrals + refined terracotta + soft layered cards. */
+/* Morehouse Atlas theme: paper-warm neutrals, Morehouse Maroon (#6E0E1E) primary,
+   ink-black foreground, soft layered cards. Maroon + black per user direction. */
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.985 0.003 80);
-  --foreground: oklch(0.205 0.008 60);
+  --background: #faf7f2;
+  --foreground: #0e0a0b;
 
-  --card: oklch(0.995 0.003 80);
-  --card-foreground: oklch(0.205 0.008 60);
-  --popover: oklch(0.995 0.003 80);
-  --popover-foreground: oklch(0.205 0.008 60);
+  --card: oklch(0.99 0.003 80);
+  --card-foreground: #0e0a0b;
+  --popover: oklch(0.99 0.003 80);
+  --popover-foreground: #0e0a0b;
 
-  --primary: oklch(0.235 0.01 50);
-  --primary-foreground: oklch(0.985 0.003 80);
+  --primary: #6e0e1e;
+  --primary-foreground: #faf7f2;
 
-  --secondary: oklch(0.965 0.005 75);
-  --secondary-foreground: oklch(0.235 0.01 50);
+  --secondary: oklch(0.95 0.008 60);
+  --secondary-foreground: #0e0a0b;
 
-  --muted: oklch(0.955 0.006 75);
-  --muted-foreground: oklch(0.49 0.012 65);
+  --muted: oklch(0.94 0.01 60);
+  --muted-foreground: #4f4a4c;
 
-  --accent: oklch(0.62 0.124 50);
-  --accent-foreground: oklch(0.99 0.005 50);
+  --accent: #6e0e1e;
+  --accent-foreground: #faf7f2;
 
-  --destructive: oklch(0.55 0.18 28);
-  --border: oklch(0.91 0.008 70);
-  --input: oklch(0.91 0.008 70);
-  --ring: oklch(0.62 0.124 50);
+  --destructive: oklch(0.49 0.18 25);
+  --border: oklch(0.88 0.012 50);
+  --input: oklch(0.88 0.012 50);
+  --ring: #6e0e1e;
 
-  --chart-1: oklch(0.62 0.124 50);
-  --chart-2: oklch(0.55 0.10 35);
-  --chart-3: oklch(0.45 0.05 240);
-  --chart-4: oklch(0.78 0.13 75);
-  --chart-5: oklch(0.58 0.06 175);
+  --chart-1: #6e0e1e;
+  --chart-2: #4f0814;
+  --chart-3: #0e0a0b;
+  --chart-4: #8c8c8c;
+  --chart-5: #c9a227;
 
-  --sidebar: oklch(0.99 0.003 80);
-  --sidebar-foreground: oklch(0.205 0.008 60);
-  --sidebar-primary: oklch(0.62 0.124 50);
-  --sidebar-primary-foreground: oklch(0.99 0.005 50);
-  --sidebar-accent: oklch(0.965 0.005 75);
-  --sidebar-accent-foreground: oklch(0.235 0.01 50);
-  --sidebar-border: oklch(0.91 0.008 70);
-  --sidebar-ring: oklch(0.62 0.124 50);
+  --sidebar: #faf7f2;
+  --sidebar-foreground: #0e0a0b;
+  --sidebar-primary: #6e0e1e;
+  --sidebar-primary-foreground: #faf7f2;
+  --sidebar-accent: oklch(0.95 0.008 60);
+  --sidebar-accent-foreground: #0e0a0b;
+  --sidebar-border: oklch(0.88 0.012 50);
+  --sidebar-ring: #6e0e1e;
 }
 
 .dark {
-  --background: oklch(0.165 0.008 60);
-  --foreground: oklch(0.965 0.003 80);
+  --background: #0e0a0b;
+  --foreground: #faf7f2;
 
-  --card: oklch(0.205 0.01 60);
-  --card-foreground: oklch(0.965 0.003 80);
-  --popover: oklch(0.205 0.01 60);
-  --popover-foreground: oklch(0.965 0.003 80);
+  --card: #161112;
+  --card-foreground: #faf7f2;
+  --popover: #161112;
+  --popover-foreground: #faf7f2;
 
-  --primary: oklch(0.965 0.003 80);
-  --primary-foreground: oklch(0.205 0.008 60);
+  --primary: #b83649;
+  --primary-foreground: #faf7f2;
 
-  --secondary: oklch(0.255 0.012 60);
-  --secondary-foreground: oklch(0.965 0.003 80);
+  --secondary: #221a1c;
+  --secondary-foreground: #faf7f2;
 
-  --muted: oklch(0.245 0.012 60);
-  --muted-foreground: oklch(0.72 0.008 70);
+  --muted: #221a1c;
+  --muted-foreground: #b8a9ad;
 
-  --accent: oklch(0.72 0.13 55);
-  --accent-foreground: oklch(0.165 0.008 60);
+  --accent: #b83649;
+  --accent-foreground: #faf7f2;
 
   --destructive: oklch(0.62 0.19 28);
-  --border: oklch(1 0 0 / 8%);
+  --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.72 0.13 55);
+  --ring: #b83649;
 
-  --chart-1: oklch(0.72 0.13 55);
-  --chart-2: oklch(0.65 0.10 35);
-  --chart-3: oklch(0.7 0.06 175);
-  --chart-4: oklch(0.78 0.13 75);
-  --chart-5: oklch(0.6 0.05 240);
+  --chart-1: #b83649;
+  --chart-2: #d96a78;
+  --chart-3: #faf7f2;
+  --chart-4: #6b6b6b;
+  --chart-5: #c9a227;
 }
 
 @layer base {
@@ -176,7 +180,7 @@
   .gradient-paper {
     background:
       radial-gradient(120% 90% at 8% -10%, oklch(0.96 0.012 70) 0%, transparent 60%),
-      radial-gradient(110% 80% at 100% 0%, oklch(0.94 0.018 50 / 0.7) 0%, transparent 65%),
+      radial-gradient(110% 80% at 100% 0%, #6e0e1e1f 0%, transparent 65%),
       var(--background);
   }
   .grid-paper {
@@ -184,6 +188,12 @@
       linear-gradient(to right, oklch(0.92 0.008 70 / 0.55) 1px, transparent 1px),
       linear-gradient(to bottom, oklch(0.92 0.008 70 / 0.55) 1px, transparent 1px);
     background-size: 28px 28px;
+  }
+  .gradient-maroon {
+    background:
+      radial-gradient(80% 60% at 18% 20%, #6e0e1e33 0%, transparent 60%),
+      radial-gradient(70% 60% at 95% 100%, #4f081433 0%, transparent 60%),
+      linear-gradient(180deg, #6e0e1e 0%, #4a0813 100%);
   }
   .text-balance {
     text-wrap: balance;
@@ -193,25 +203,25 @@
 /* Leaflet tweaks: make markers feel like the rest of the design. */
 .leaflet-container {
   font: inherit;
-  background: oklch(0.96 0.006 75);
+  background: #f3efe9;
 }
 .leaflet-tile {
-  filter: saturate(0.85) contrast(1.02);
+  filter: saturate(0.7) contrast(1.05) hue-rotate(-6deg);
 }
 .leaflet-control-attribution {
-  background: oklch(0.99 0.003 80 / 0.86);
+  background: #faf7f2ed;
   border-radius: 6px;
   padding: 2px 8px !important;
   font-size: 10px;
-  color: oklch(0.5 0.01 65);
+  color: #4f4a4c;
 }
 .leaflet-popup-content-wrapper {
-  background: oklch(0.995 0.003 80);
+  background: #faf7f2;
   border-radius: 14px;
-  border: 1px solid oklch(0.91 0.008 70);
+  border: 1px solid #e6dfd4;
   box-shadow:
-    0 1px 0 oklch(0.92 0.01 70),
-    0 12px 28px -16px oklch(0.18 0.02 60 / 0.22);
+    0 1px 0 #ece5da,
+    0 12px 28px -16px #0e0a0b40;
   padding: 0;
 }
 .leaflet-popup-content {
@@ -219,11 +229,11 @@
   width: 280px !important;
 }
 .leaflet-popup-tip {
-  background: oklch(0.995 0.003 80);
-  border: 1px solid oklch(0.91 0.008 70);
+  background: #faf7f2;
+  border: 1px solid #e6dfd4;
 }
 .leaflet-popup-close-button {
-  color: oklch(0.45 0.01 60) !important;
+  color: #4f4a4c !important;
   font-size: 18px !important;
   padding: 6px !important;
   width: 22px !important;
@@ -241,22 +251,22 @@
 .atlas-pin__dot {
   position: absolute;
   inset: 18px 2px 2px 2px;
-  background: oklch(0.62 0.124 50);
+  background: #6e0e1e;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
-  border: 2px solid oklch(0.99 0.003 80);
-  box-shadow: 0 4px 10px -2px oklch(0.18 0.02 60 / 0.25);
+  border: 2px solid #faf7f2;
+  box-shadow: 0 4px 10px -2px #0e0a0b40;
   transition:
     transform 160ms ease,
     box-shadow 160ms ease,
     background 160ms ease;
 }
 .atlas-pin__dot--selected {
-  background: oklch(0.235 0.01 50);
+  background: #4f0814;
   transform: rotate(-45deg) scale(1.18);
   box-shadow:
-    0 0 0 4px oklch(0.62 0.124 50 / 0.22),
-    0 6px 14px -2px oklch(0.18 0.02 60 / 0.32);
+    0 0 0 4px #6e0e1e3c,
+    0 6px 14px -2px #0e0a0b52;
 }
 .atlas-pin__label {
   position: absolute;
@@ -265,9 +275,9 @@
   transform: translateX(-50%);
   font-size: 9px;
   font-weight: 600;
-  color: oklch(0.18 0.02 60);
-  background: oklch(0.99 0.003 80 / 0.92);
-  border: 1px solid oklch(0.91 0.008 70);
+  color: #0e0a0b;
+  background: #faf7f2eb;
+  border: 1px solid #e6dfd4;
   border-radius: 6px;
   padding: 2px 5px;
   line-height: 1.05;
@@ -277,6 +287,6 @@
   max-width: 70px;
   text-overflow: ellipsis;
   overflow: hidden;
-  box-shadow: 0 1px 3px oklch(0.18 0.02 60 / 0.12);
+  box-shadow: 0 1px 3px #0e0a0b1f;
   pointer-events: none;
 }
