@@ -3,10 +3,20 @@
 // uploaded file; the only safety ceiling is a generous one that exists purely
 // to prevent a runaway browser tab from OOMing on truly enormous files.
 //
+// Robustness focus: minimize "unable to geocode" failures from uploaded
+// HUD/spreadsheet data by:
+//   * Freeform address parsing (a single combined address column).
+//   * PO-Box filtering at parse time (no point sending to Nominatim).
+//   * Suite / unit / building stripping before geocode.
+//   * Street-suffix and directional abbreviation expansion for cache-key
+//     normalization (so "Peachtree St NE" and "Peachtree Street Northeast"
+//     hit the same cache slot).
+//   * Diacritics flattening.
+//
 // In addition to producing ready-to-map rows (with valid lat/lng), the parser
 // returns a separate `pending` list for rows that are otherwise valid but
-// lack coordinates. These rows are still searchable in the chat; a separate
-// geocode pass converts them to lat/lng afterwards.
+// lack coordinates. These rows are geocoded via a separate Convex action.
+// PO Box rows skip geocoding and land in `chatOnly` so they're searchable.
 
 // Generous safety cap. Effectively "no cap"; only used to guard against
 // runaway inputs (e.g. corrupted multi-GB uploads).
@@ -51,6 +61,8 @@ export type AtlasAsset = {
   needsGeocode?: boolean;
   /** Cache key for client-side de-duplication. */
   geoKey?: string;
+  /** Accuracy bucket from the geocode hit; undefined for rows not yet tried. */
+  coordAccuracy?: CoordAccuracy;
 };
 
 /** Address fragment passed verbatim to Nominatim. */
@@ -62,6 +74,13 @@ export type AddressFragment = {
   country: string;
 };
 
+/**
+ * Coarse accuracy bucket — surfaced to the client so the UI can
+ * distinguish rows that came from a structured address match vs a zip
+ * centroid vs a multi-tier fallback.
+ */
+export type CoordAccuracy = "exact" | "relaxed" | "zip-centroid";
+
 export type ImportedRow = {
   doc: AtlasAsset;
   warnings: string[];
@@ -69,7 +88,8 @@ export type ImportedRow = {
 
 export type ImportSummary = {
   rows: ImportedRow[]; // rows with valid lat/lng
-  pending: ImportedRow[]; // rows missing lat/lng but otherwise valid
+  pending: ImportedRow[]; // rows missing lat/lng but otherwise valid → geocode
+  chatOnly: ImportedRow[]; // rows that should NOT be geocoded (PO Box, etc.)
   totalParsed: number;
   rejected: number; // unrecoverable (no name, etc.)
   filename: string;
@@ -103,7 +123,6 @@ const ALIASES: Record<string, string[]> = {
     "recipient",
     "program_name",
     "grantee",
-    // Common variants for fitness / class / activity CSVs
     "class",
     "classname",
     "class_name",
@@ -161,7 +180,6 @@ const ALIASES: Record<string, string[]> = {
 
   tagline: ["tagline", "subtitle", "summary", "short", "short_description"],
 
-  // Category — covers "Community Asset Type", "Asset Type", etc.
   category: [
     "category",
     "type",
@@ -176,10 +194,8 @@ const ALIASES: Record<string, string[]> = {
     "service_type",
   ],
 
-  // Numeric score
   rating: ["rating", "score", "stars", "community_score"],
 
-  // Engagement / reach
   reviewCount: [
     "review_count",
     "reviews",
@@ -202,7 +218,6 @@ const ALIASES: Record<string, string[]> = {
 
   priceTier: ["price_tier", "price", "cost", "cost_tier", "fee"],
 
-  // Long-form notes — aliases cover HUD-grant colloquialisms.
   description: [
     "description",
     "desc",
@@ -228,7 +243,6 @@ const ALIASES: Record<string, string[]> = {
     "need",
   ],
 
-  // Address — combined street address; alt: append county to address.
   address: [
     "address",
     "street",
@@ -238,6 +252,8 @@ const ALIASES: Record<string, string[]> = {
     "site_address",
     "facility_address",
     "physical_address",
+    // Some spreadsheets put city/state/zip inside the address column.
+    "full_address",
   ],
   city: ["city", "town", "municipality", "locality"],
   state: ["state", "region", "province", "st"],
@@ -256,7 +272,6 @@ const ALIASES: Record<string, string[]> = {
   lat: ["lat", "latitude", "y", "y_lat", "coord_lat"],
   lng: ["lng", "long", "longitude", "lon", "x", "x_lng", "coord_long"],
 
-  // Features — grant-style tags ("Nat'l Goal", HUD national goals)
   features: [
     "features",
     "tags",
@@ -312,17 +327,166 @@ const ALIASES: Record<string, string[]> = {
   accentColor: ["accent_color", "color", "accent"],
 };
 
-/** Canonical key the client uses to dedupe geocode requests. */
-export function geoKeyFor(addr: AddressFragment): string {
+// ----- Address parsing helpers ---------------------------------------------
+
+/** Strip diacritics and lowercase. Used for cache-key normalization. */
+function flattenAscii(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Common street-suffix + directional expansions (US). */
+const ABBREV_MAP: Record<string, string> = {
+  st: "street",
+  ave: "avenue",
+  av: "avenue",
+  blvd: "boulevard",
+  rd: "road",
+  dr: "drive",
+  ln: "lane",
+  ct: "court",
+  cir: "circle",
+  pl: "place",
+  ter: "terrace",
+  hwy: "highway",
+  pkwy: "parkway",
+  way: "way",
+  sq: "square",
+  tr: "trail",
+  drv: "drive",
+  cv: "cove",
+  tce: "terrace",
+  expy: "expressway",
+  frwy: "freeway",
+  fwy: "freeway",
+  loop: "loop",
+  est: "estate",
+  mnr: "manor",
+};
+
+const DIRECTIONAL_MAP: Record<string, string> = {
+  n: "north",
+  s: "south",
+  e: "east",
+  w: "west",
+  ne: "northeast",
+  nw: "northwest",
+  se: "southeast",
+  sw: "southwest",
+};
+
+/** Build a canonical, normalized key for an address fragment. */
+export function normalizeAddressKey(addr: AddressFragment): string {
+  const tokenizeForKey = (s: string): string => {
+    let out = flattenAscii(s).toLowerCase();
+    // Strip "PO Box NNN" tokens entirely.
+    out = out.replace(/\bp\.?\s*o\.?\s*box\s*[#\w-]*/g, "");
+    // Strip trailing suite/unit indicators.
+    out = out.replace(
+      /\b(?:suite|ste|apt|apartment|unit|#|rm|room|bldg|building|fl|floor|loft|slip|dept|ph|bay)\s*[#\w-]*/g,
+      "",
+    );
+    // Expand abbreviations.
+    out = out.replace(
+      /\b([a-z]{2,5})\b\.?/g,
+      (m) => ABBREV_MAP[m.replace(".", "")] ?? m,
+    );
+    // Expand directionals.
+    out = out.replace(/\b(ne|nw|se|sw|n|s|e|w)\b\.?/g, (m) =>
+      DIRECTIONAL_MAP[m.replace(".", "")] ?? m,
+    );
+    return out
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  };
   return [
-    addr.street.trim().toLowerCase(),
-    addr.city.trim().toLowerCase(),
-    addr.state.trim().toLowerCase(),
-    addr.postalcode.trim().toLowerCase(),
+    tokenizeForKey(addr.street),
+    tokenizeForKey(addr.city),
+    tokenizeForKey(addr.state),
+    tokenizeForKey(addr.postalcode),
   ]
     .filter(Boolean)
     .join("|");
 }
+
+/** Canonical key the client uses to dedupe geocode requests (legacy alias). */
+export function geoKeyFor(addr: AddressFragment): string {
+  return normalizeAddressKey(addr);
+}
+
+/** Return true iff the street line is just a P.O. Box. */
+export function isPoBoxOnly(street: string): boolean {
+  return /^\s*p\.?\s*o\.?\s*box\s+[#\w-]+/i.test(street);
+}
+
+/**
+ * Strip a trailing unit/suite/building from a street line so Nominatim
+ * gets the canonical street.
+ */
+export function stripUnit(street: string): string {
+  return street
+    .replace(
+      /\s*[,#]?\s*(?:suite|ste|apt|apartment|unit|#|rm|room|bldg|building|fl|floor|loft|slip|dept|ph|bay)\s*[#\w-]*/gi,
+      "",
+    )
+    .replace(/\s*,\s*$/g, "")
+    .trim();
+}
+
+/**
+ * Parse a single combined address string ("123 Peachtree St NE, Atlanta, GA 30314")
+ * into structured fields. Used as a fallback when the CSV doesn't have
+ * separate city/state/zip columns, or when the address column itself is
+ * a comma-delimited blob.
+ */
+export function parseFreeformAddress(s: string): AddressFragment {
+  const cleaned = flattenAscii(s).trim();
+  const parts = cleaned
+    .replace(/[\n\r]/g, ",")
+    .split(/,/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  let state = "";
+  let postalcode = "";
+  let city = "";
+
+  // Walk from the end: peel off "STATE ZIP", "ZIP", "STATE" pieces in any order.
+  while (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    const m1 = last.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+    if (m1) {
+      state = m1[1].toUpperCase();
+      postalcode = m1[2];
+      parts.pop();
+      continue;
+    }
+    const m2 = last.match(/^\d{5}(?:-\d{4})?$/);
+    if (m2) {
+      postalcode = m2[0];
+      parts.pop();
+      continue;
+    }
+    break;
+  }
+
+  // Next part back is the city.
+  if (parts.length > 0) {
+    city = parts.pop() ?? "";
+  }
+
+  // Everything left is the street + maybe building/suite markers.
+  const street = parts.join(", ").trim();
+
+  return {
+    street,
+    city,
+    state,
+    postalcode,
+    country: "USA",
+  };
+}
+
+// ----- Parser ---------------------------------------------------------------
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[\s_-]+/g, "").trim();
@@ -423,15 +587,67 @@ function splitFeatures(s: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Build an AddressFragment from the *explicit* column fields when present,
+ * falling back to a freeform parse of the address column when the
+ * address looks like a combined string (contains commas) AND the
+ * other fields are empty.
+ */
 function makeAddressFragment(get: (f: string) => string): AddressFragment {
+  const explicitStreet = get("address") || get("street") || "";
+  const explicitCity = get("city");
+  const explicitState = get("state");
+  const explicitZip = get("postalCode");
+  const explicitCountry = get("country") || "USA";
+
+  // If the address column looks like a full combined address and the
+  // explicit city/state/zip are missing, parse it as freeform.
+  if (explicitStreet && /,/.test(explicitStreet) && !explicitCity) {
+    const parsed = parseFreeformAddress(explicitStreet);
+    return {
+      street: stripUnit(parsed.street) || explicitStreet,
+      city: parsed.city || explicitCity,
+      state: parsed.state || explicitState,
+      postalcode: parsed.postalcode || explicitZip,
+      country: explicitCountry || "USA",
+    };
+  }
+
+  // If the address has commas AND we have a separate city, just strip the unit
+  // from the street portion while keeping the city/state/zip.
+  const street = stripUnit(explicitStreet);
+
   return {
-    street: get("address") || get("street") || "",
-    city: get("city") || "",
-    state: get("state") || "",
-    postalcode: get("postalCode") || "",
-    country: get("country") || "USA",
+    street,
+    city: explicitCity,
+    state: explicitState,
+    postalcode: explicitZip,
+    country: explicitCountry || "USA",
   };
 }
+
+// Static Atlanta ZIP centroids — short-circuits the geocode cascade for
+// SW Atlanta HUD addresses, no network roundtrip required.
+export const ATLANTA_ZIP_CENTROIDS: Record<string, { lat: number; lng: number }> = {
+  "30303": { lat: 33.7537, lng: -84.3863 },
+  "30306": { lat: 33.7868, lng: -84.3590 },
+  "30307": { lat: 33.7691, lng: -84.3380 },
+  "30308": { lat: 33.7710, lng: -84.3777 },
+  "30309": { lat: 33.7972, lng: -84.3877 },
+  "30310": { lat: 33.7329, lng: -84.4088 },
+  "30311": { lat: 33.7326, lng: -84.4828 },
+  "30312": { lat: 33.7465, lng: -84.3759 },
+  "30313": { lat: 33.7685, lng: -84.3950 },
+  "30314": { lat: 33.7563, lng: -84.4253 },
+  "30315": { lat: 33.7051, lng: -84.3826 },
+  "30316": { lat: 33.7179, lng: -84.3339 },
+  "30317": { lat: 33.7495, lng: -84.3122 },
+  "30318": { lat: 33.7916, lng: -84.4472 },
+  "30324": { lat: 33.8205, lng: -84.3585 },
+  "30331": { lat: 33.6968, lng: -84.5326 },
+  "30336": { lat: 33.7311, lng: -84.6533 },
+  "30337": { lat: 33.6437, lng: -84.4611 },
+};
 
 export function importCsv(
   text: string,
@@ -440,28 +656,31 @@ export function importCsv(
   const delimiter = detectDelimiter(text);
   const grid = parseDelimited(text, delimiter);
   if (grid.length < 2) {
-    return { rows: [], pending: [], totalParsed: 0, rejected: 0, filename };
+    return {
+      rows: [],
+      pending: [],
+      chatOnly: [],
+      totalParsed: 0,
+      rejected: 0,
+      filename,
+    };
   }
 
   const headers = grid[0];
   const fieldIdx: Record<string, number> = {};
-  // Skip blank title/section rows that some spreadsheet exports prepend.
-  const headerRow = grid.find((row, idx) =>
-    idx > 0 &&
-    row.filter((c) => c && c.trim() !== "").length >= 2 &&
-    row.some((c) => aliasIndexFor(c) !== null),
+  const headerRow = grid.find(
+    (row, idx) =>
+      idx > 0 &&
+      row.filter((c) => c && c.trim() !== "").length >= 2 &&
+      row.some((c) => aliasIndexFor(c) !== null),
   );
   const effectiveHeaders = headerRow ?? headers;
-  // Track offset so dataRows starts after the header row we picked.
   const headerOffset = headerRow ? grid.indexOf(headerRow) + 1 : 1;
   effectiveHeaders.forEach((h, i) => {
     const f = aliasIndexFor(h);
     if (f && !(f in fieldIdx)) fieldIdx[f] = i;
   });
 
-  // Fallback when no `name` header was recognized: use column A. Many civic
-  // / HUD spreadsheets put a name in the first column even when the
-  // header text isn't one we know (e.g. custom merged-cell labels).
   if (fieldIdx["name"] === undefined) {
     fieldIdx["name"] = 0;
   }
@@ -469,6 +688,7 @@ export function importCsv(
   const dataRows = grid.slice(headerOffset);
   const out: ImportedRow[] = [];
   const pending: ImportedRow[] = [];
+  const chatOnly: ImportedRow[] = [];
   let rejected = 0;
 
   const slice = dataRows.slice(0, MAX_ROWS);
@@ -536,25 +756,37 @@ export function importCsv(
     const row: ImportedRow = { doc, warnings };
 
     if (hasCoords) {
-      if (!features.length) warnings.push("no features");
       out.push(row);
-    } else {
-      // Has name and address but no coords — slated for geocoding.
-      if (!addr.street && !addr.postalcode) {
-        warnings.push("no address or postal code for geocoding");
-      } else {
-        warnings.push("awaiting geocoding");
-      }
-      doc.address = addr.street;
-      doc.needsGeocode = true;
-      doc.geoKey = geoKeyFor(addr);
-      pending.push(row);
+      continue;
     }
+
+    // PO Box: skip the geocode cascade entirely. Still searchable in chat.
+    if (isPoBoxOnly(addr.street)) {
+      warnings.push("PO Box address \u2014 no map pin");
+      doc.coordAccuracy = undefined;
+      chatOnly.push(row);
+      continue;
+    }
+
+    // No street and no postal code → also can't geocode.
+    if (!addr.street && !addr.postalcode) {
+      warnings.push("no street or postal code for geocoding");
+      doc.needsGeocode = false;
+      doc.coordAccuracy = undefined;
+      chatOnly.push(row);
+      continue;
+    }
+
+    warnings.push("awaiting geocoding");
+    doc.needsGeocode = true;
+    doc.geoKey = geoKeyFor(addr);
+    pending.push(row);
   }
 
   return {
     rows: out,
     pending,
+    chatOnly,
     totalParsed: dataRows.length,
     rejected,
     filename,

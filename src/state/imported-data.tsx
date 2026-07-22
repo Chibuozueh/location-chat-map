@@ -16,6 +16,7 @@ import { useAction } from "convex/react";
 import { toast } from "sonner";
 import {
   type AtlasAsset,
+  type CoordAccuracy,
   type ImportSummary,
   importCsv,
 } from "@/lib/csv-import";
@@ -26,18 +27,23 @@ export type GeocodeProgress = {
   total: number; // pending at start of pass
   done: number; // finished (cached + fetched + failed)
   cached: number;
-  fetched: number;
+  /** Tier 1 or Tier 2 structured Nominatim match — high-confidence. */
+  exact: number;
+  /** Tier 3 relaxed match (street+zip only). */
+  relaxed: number;
+  /** Zip centroid (Atlanta table or Zippopotam.us fallback). */
+  zipCentroid: number;
   failed: number;
   active: boolean;
 };
 
 type ImportedState = {
-  rows: AtlasAsset[]; // rows with valid lat/lng that are queryable + mappable
+  rows: AtlasAsset[];
   pending: Array<{
-    /** Stable id used as React key + savedResultsMap key. */
     id: string;
     doc: AtlasAsset; // has lat = NaN, lng = NaN until geocoded
   }>;
+  chatOnly: AtlasAsset[]; // PO Box + any row that can't be geocoded but is searchable
   failed: Array<{ id: string; reason: string; doc: AtlasAsset }>;
   filename: string | null;
   importedAt: number | null;
@@ -50,7 +56,9 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   total: 0,
   done: 0,
   cached: 0,
-  fetched: 0,
+  exact: 0,
+  relaxed: 0,
+  zipCentroid: 0,
   failed: 0,
   active: false,
 };
@@ -58,6 +66,7 @@ const EMPTY_PROGRESS: GeocodeProgress = {
 const EMPTY: ImportedState = {
   rows: [],
   pending: [],
+  chatOnly: [],
   failed: [],
   filename: null,
   importedAt: null,
@@ -76,16 +85,9 @@ type ImportedContextValue = {
 
 const ImportedContext = createContext<ImportedContextValue | null>(null);
 
-// Pin Atlanta metro so a single cached fallback exists for "no street but
-// known city/zips". These are NOT used to fabricate map pins for unknown
-// addresses — they're a fallback only when an address-level hit fails AND
-// the user wants it. Currently we drop them instead (more honest), but the
-// constants are here for future use.
-//
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const ATLANTA_FALLBACK_COORDS = { lat: 33.749, lng: -84.388 };
-
 // Nominatim public usage policy: ≤ 1 req/sec. We add a tiny slack of 100ms.
+// Note: Atlanta-zip hits return instantly without a network call, so they
+// won't trigger the spacing sleep.
 const NOMINATIM_SPACING_MS = 1100;
 
 export function ImportedDataProvider({ children }: { children: ReactNode }) {
@@ -93,15 +95,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   const [importing, setImporting] = useState(false);
   const geocode = useAction(api.geocode.geocodeAddress);
 
-  // Cache by canonical address key (street|postalcode) so repeated rows
-  // are instant. We persist this cache across the session, not across
-  // reloads.
-  const coordCacheRef = useRef<Map<string, { lat: number; lng: number }>>(
-    new Map(),
-  );
+  // Cache by normalized address key so repeated rows are instant.
+  const coordCacheRef = useRef<
+    Map<string, { lat: number; lng: number; accuracy: CoordAccuracy }>
+  >(new Map());
 
-  // The geocode loop is keyed off the pending list length so an external
-  // `clear()` aborts it cleanly.
+  // Cancellation flag so an external `clear()` aborts the loop cleanly.
   const cancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   const importFromFile = useCallback(async (file: File) => {
@@ -112,8 +111,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       const summary = importCsv(text, file.name);
       const readyCount = summary.rows.length;
       const pendingCount = summary.pending.length;
+      const chatOnlyCount = summary.chatOnly.length;
 
-      if (!readyCount && !pendingCount) {
+      if (!readyCount && !pendingCount && !chatOnlyCount) {
         toast.error(
           `No valid rows in ${file.name}. Each row needs at least a Name.`,
         );
@@ -125,10 +125,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         id: `${i}-${r.doc.slug}`,
         doc: r.doc,
       }));
+      const chatOnly = summary.chatOnly.map((r) => r.doc);
 
       setState({
         rows: ready,
         pending,
+        chatOnly,
         failed: [],
         filename: summary.filename,
         importedAt: Date.now(),
@@ -138,25 +140,31 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           total: pendingCount,
           done: 0,
           cached: 0,
-          fetched: 0,
+          exact: 0,
+          relaxed: 0,
+          zipCentroid: 0,
           failed: 0,
           active: pendingCount > 0,
         },
       });
 
-      // First message describes what just landed.
       const skipped = summary.rejected;
-      const placed = readyCount;
+      const placed = readyCount + chatOnlyCount;
       const pendingNote =
         pendingCount > 0 ? ` · geocoding ${pendingCount}` : "";
+      const chatOnlyNote =
+        chatOnlyCount > 0 ? ` · ${chatOnlyCount} address-only` : "";
       toast.success(
         `Showing only your uploaded data: ${placed} ${placed === 1 ? "row" : "rows"} from ${file.name}` +
           (skipped ? ` · ${skipped} skipped` : "") +
+          chatOnlyNote +
           pendingNote,
       );
     } catch (err) {
       console.error("CSV import error", err);
-      toast.error(`Couldn't parse ${file.name}. Make sure it's a CSV or TSV file.`);
+      toast.error(
+        `Couldn't parse ${file.name}. Make sure it's a CSV or TSV file.`,
+      );
     } finally {
       setImporting(false);
     }
@@ -172,9 +180,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     coordCacheRef.current.clear();
   }, []);
 
-  // Geocode loop. We re-run whenever a new set of pending items appears
-  // (signaled by filename + importedAt). Uses an internal cursor so we
-  // don't lose progress if React re-renders.
+  // Geocode loop. Runs whenever a brand-new upload lands (signaled by
+  // importedAt). Uses the multi-tier cascade returned by the action.
   useEffect(() => {
     if (!state.pending.length) return;
     if (!state.progress.active) return;
@@ -188,10 +195,13 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         const key = doc.geoKey || "";
 
         let coord: { lat: number; lng: number } | null = null;
-        let source: "cached" | "fetched" | null = null;
+        let accuracy: CoordAccuracy | null = null;
+        let source: "cached" | "fetched" | "zippo" | null = null;
 
         if (key && coordCacheRef.current.has(key)) {
-          coord = coordCacheRef.current.get(key)!;
+          const cached = coordCacheRef.current.get(key)!;
+          coord = { lat: cached.lat, lng: cached.lng };
+          accuracy = cached.accuracy;
           source = "cached";
         } else {
           try {
@@ -204,8 +214,15 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             });
             if (result) {
               coord = { lat: result.lat, lng: result.lng };
+              accuracy = result.accuracy;
               source = "fetched";
-              if (key) coordCacheRef.current.set(key, coord);
+              if (key) {
+                coordCacheRef.current.set(key, {
+                  lat: result.lat,
+                  lng: result.lng,
+                  accuracy: result.accuracy,
+                });
+              }
             }
           } catch (err) {
             console.warn("[geocode] action threw", err);
@@ -216,28 +233,29 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
         setState((prev) => {
           if (cancel.cancelled) return prev;
-          // If the imported set has been replaced (clear+reupload) bail.
           if (prev.importedAt !== state.importedAt) return prev;
 
-          const remainingPending = prev.pending.filter((p) => p.id !== item.id);
+          const remainingPending = prev.pending.filter(
+            (p) => p.id !== item.id,
+          );
           let nextRows = prev.rows;
-          if (coord && source) {
+          if (coord && accuracy) {
             const placed: AtlasAsset = {
               ...doc,
               lat: coord.lat,
               lng: coord.lng,
               needsGeocode: false,
+              coordAccuracy: accuracy,
             };
             nextRows = [...prev.rows, placed];
           } else {
-            const failed = {
+            prev.failed.push({
               id: item.id,
               reason: key
                 ? `Could not locate "${doc.address}, ${doc.city}, ${doc.state} ${doc.postalCode}".`
                 : "Row has no street or ZIP for geocoding.",
               doc,
-            };
-            prev.failed.push(failed);
+            });
           }
 
           const done = prev.progress.done + 1;
@@ -249,8 +267,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             progress: {
               ...prev.progress,
               done,
-              cached: prev.progress.cached + (source === "cached" ? 1 : 0),
-              fetched: prev.progress.fetched + (source === "fetched" ? 1 : 0),
+              cached:
+                prev.progress.cached + (source === "cached" ? 1 : 0),
+              exact:
+                prev.progress.exact +
+                (source === "fetched" && accuracy === "exact" ? 1 : 0),
+              relaxed:
+                prev.progress.relaxed +
+                (source === "fetched" && accuracy === "relaxed" ? 1 : 0),
+              zipCentroid:
+                prev.progress.zipCentroid +
+                (source === "fetched" && accuracy === "zip-centroid"
+                  ? 1
+                  : 0),
               failed: !coord ? prev.progress.failed + 1 : prev.progress.failed,
               active: done < prev.progress.total,
             },
@@ -258,6 +287,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         });
 
         // Honor Nominatim usage policy: ≤ 1 req/sec, with a little slack.
+        // Skip the sleep when the result came from cache or the local zip
+        // table (instant hits).
         if (source === "fetched") {
           await new Promise((r) => setTimeout(r, NOMINATIM_SPACING_MS));
         }
@@ -265,7 +296,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     };
 
     void run();
-    // We intentionally only re-run when a brand-new upload lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.importedAt]);
 
@@ -281,7 +311,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ImportedContext.Provider value={value}>{children}</ImportedContext.Provider>
+    <ImportedContext.Provider value={value}>
+      {children}
+    </ImportedContext.Provider>
   );
 }
 
@@ -298,10 +330,8 @@ export type AnyAsset = LocationDoc | AtlasAsset;
  *  (case-insensitive). Seeded order is preserved; brand-new imports append.
  *  Rows with non-finite lat/lng remain in `chatOnly` so the chat can still
  *  answer about them without showing ghost pins on the map.
- *
  *  Pass `replace: true` when the user wants their upload to fully replace
- *  the curated default assets (e.g. a custom asset map). In replace mode
- *  the seeded list is ignored and only uploaded rows are returned. */
+ *  the curated default assets (e.g. a custom asset map). */
 export function mergeAssets(
   seeded: LocationDoc[],
   imported: AtlasAsset[],
@@ -330,6 +360,5 @@ export function mergeAssets(
     if (!consumed.has(i.slug.toLowerCase())) mappable.push(i);
   }
 
-  const chatOnlyFinal: AnyAsset[] = [...chatOnly];
-  return { mappable, chatOnly: chatOnlyFinal };
+  return { mappable, chatOnly: [...chatOnly] };
 }

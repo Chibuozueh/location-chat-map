@@ -298,9 +298,19 @@ export function ChatPanel(props: {
                     · {importedState.progress.cached} cached
                   </span>
                 )}
-                {importedState.progress.fetched > 0 && (
+                {importedState.progress.exact > 0 && (
                   <span className="text-foreground/70">
-                    · {importedState.progress.fetched} fetched
+                    · {importedState.progress.exact} exact
+                  </span>
+                )}
+                {importedState.progress.relaxed > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.relaxed} relaxed
+                  </span>
+                )}
+                {importedState.progress.zipCentroid > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.zipCentroid} zip-centroid
                   </span>
                 )}
                 {importedState.progress.failed > 0 && (

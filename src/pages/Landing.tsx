@@ -70,6 +70,7 @@ function LandingInner() {
         seeded,
         importedState.rows,
         [
+          ...importedState.chatOnly,
           ...importedState.pending.map((p) => p.doc),
           ...importedState.failed.map((f) => f.doc),
         ],
@@ -78,6 +79,7 @@ function LandingInner() {
     [
       seeded,
       importedState.rows,
+      importedState.chatOnly,
       importedState.pending,
       importedState.failed,
       hasAnyImport,
