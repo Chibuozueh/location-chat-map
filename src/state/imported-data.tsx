@@ -47,6 +47,7 @@ type ImportedState = {
   failed: Array<{ id: string; reason: string; doc: AtlasAsset }>;
   filename: string | null;
   importedAt: number | null;
+  retryNonce: number; // bumped whenever the user retries failed geocodes
   totalParsed: number;
   rejected: number;
   progress: GeocodeProgress;
@@ -70,6 +71,7 @@ const EMPTY: ImportedState = {
   failed: [],
   filename: null,
   importedAt: null,
+  retryNonce: 0,
   totalParsed: 0,
   rejected: 0,
   progress: EMPTY_PROGRESS,
@@ -80,6 +82,7 @@ type ImportedContextValue = {
   importing: boolean;
   geocoding: boolean;
   importFromFile: (file: File) => Promise<void>;
+  retry: () => void;
   clear: () => void;
 };
 
@@ -134,6 +137,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         failed: [],
         filename: summary.filename,
         importedAt: Date.now(),
+        retryNonce: 0,
         totalParsed: summary.totalParsed,
         rejected: summary.rejected,
         progress: {
@@ -180,8 +184,39 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     coordCacheRef.current.clear();
   }, []);
 
+  // Re-run the cascade on every previously-failed row. We move the failed
+  // entries back into pending, reset the failed counter, and bump
+  // `retryNonce` so the geocode loop below re-fires without requiring the
+  // user to re-upload. Cache holds only successful hits, so this is a
+  // genuine fresh attempt for everything that previously couldn't be
+  // located.
+  const retry = useCallback(() => {
+    if (state.failed.length === 0) return;
+    const count = state.failed.length;
+    toast(`Retrying ${count} geocode${count === 1 ? "" : "s"}…`);
+    setState((prev) => {
+      const moved = prev.failed.map((f) => ({
+        id: f.id,
+        doc: { ...f.doc, needsGeocode: true },
+      }));
+      return {
+        ...prev,
+        failed: [],
+        pending: [...prev.pending, ...moved],
+        retryNonce: prev.retryNonce + 1,
+        progress: {
+          ...prev.progress,
+          total: prev.progress.total + prev.failed.length,
+          failed: 0,
+          active: true,
+        },
+      };
+    });
+  }, [state.failed.length]);
+
   // Geocode loop. Runs whenever a brand-new upload lands (signaled by
-  // importedAt). Uses the multi-tier cascade returned by the action.
+  // importedAt) OR the user fires a Retry (signaled by retryNonce).
+  // Uses the multi-tier cascade returned by the action.
   useEffect(() => {
     if (!state.pending.length) return;
     if (!state.progress.active) return;
@@ -297,7 +332,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.importedAt]);
+  }, [state.importedAt, state.retryNonce]);
 
   const value = useMemo<ImportedContextValue>(
     () => ({
@@ -305,9 +340,10 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       importing,
       geocoding: state.progress.active,
       importFromFile,
+      retry,
       clear,
     }),
-    [state, importing, importFromFile, clear],
+    [state, importing, importFromFile, retry, clear],
   );
 
   return (

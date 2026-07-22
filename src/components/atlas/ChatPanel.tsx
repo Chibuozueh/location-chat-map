@@ -100,7 +100,7 @@ export function ChatPanel(props: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { state: importedState, importFromFile, importing, clear } =
+  const { state: importedState, importFromFile, importing, retry, clear } =
     useImportedData();
 
   const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
@@ -314,9 +314,20 @@ export function ChatPanel(props: {
                   </span>
                 )}
                 {importedState.progress.failed > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.failed} couldn't be located
-                  </span>
+                  <>
+                    <span className="text-foreground/70">
+                      · {importedState.progress.failed} couldn't be located
+                    </span>
+                    <button
+                      type="button"
+                      onClick={retry}
+                      disabled={importing}
+                      className="ml-0.5 inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f] disabled:opacity-50"
+                      title="Re-run the address cascade on every previously failed row (cache stays intact for already-located rows)"
+                    >
+                      ↻ Retry
+                    </button>
+                  </>
                 )}
                 <span
                   className="ml-auto h-1 grow-0 rounded-full bg-border"
