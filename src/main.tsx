@@ -80,6 +80,29 @@ class RootErrorBoundary extends React.Component<
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
+function AppRoot() {
+  return (
+    <RootErrorBoundary>
+      <ToolbarErrorBoundary>
+        <VlyToolbar />
+      </ToolbarErrorBoundary>
+      <ConvexAuthProvider client={convex}>
+        <BrowserRouter>
+          <RouteSyncer />
+          <Suspense fallback={<RouteLoading />}>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/auth" element={<AuthPage redirectAfterAuth="/" />} /> {/* TODO: change redirect after auth to correct page */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+        <Toaster />
+      </ConvexAuthProvider>
+    </RootErrorBoundary>
+  );
+}
+
 
 
 function RouteSyncer() {
@@ -106,25 +129,20 @@ function RouteSyncer() {
 }
 
 
+// NOTE: <StrictMode> is intentionally disabled in development because
+// react-leaflet@4.2.1's `MapContainer` does not clear the Leaflet
+// `_leaflet_id` from the DOM container on cleanup, which causes
+// "Map container is already initialized." when React double-invokes the
+// layout effect in StrictMode dev. We still wrap in StrictMode in
+// production to keep the dev-safety net for the rest of the app.
+const isProd = import.meta.env.PROD;
+
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <RootErrorBoundary>
-      <ToolbarErrorBoundary>
-        <VlyToolbar />
-      </ToolbarErrorBoundary>
-      <ConvexAuthProvider client={convex}>
-        <BrowserRouter>
-          <RouteSyncer />
-          <Suspense fallback={<RouteLoading />}>
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route path="/auth" element={<AuthPage redirectAfterAuth="/" />} /> {/* TODO: change redirect after auth to correct page */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-        <Toaster />
-      </ConvexAuthProvider>
-    </RootErrorBoundary>
-  </StrictMode>,
+  isProd ? (
+    <StrictMode>
+      <AppRoot />
+    </StrictMode>
+  ) : (
+    <AppRoot />
+  ),
 );

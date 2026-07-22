@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   CATEGORY_LABEL,
   FEATURE_LABEL,
@@ -67,9 +67,7 @@ export function MapView(props: {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> · <a href="https://carto.com/attributions">CARTO</a>'
           subdomains={["a", "b", "c", "d"]}
         />
-        <AnimatePresence>
-          <FlyTo key={selectedSlug ?? "default"} center={center} />
-        </AnimatePresence>
+        <FlyTo key={selectedSlug ?? "default"} center={center} />
         {locations.map((loc) => {
           const isSelected = loc.slug === selectedSlug;
           const icon = makePinIcon(isSelected, loc.accentColor || "", loc.name);
