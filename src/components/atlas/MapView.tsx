@@ -23,7 +23,7 @@ function makePinIcon(selected: boolean, accent: string, name: string) {
   const fill = selected
     ? "oklch(0.235 0.01 50)"
     : accent || "oklch(0.62 0.124 50)";
-  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 3);
+  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 4);
   const labelHtml = words.map(escapeHtml).join("<br/>");
   const safeLabel = escapeHtml(words.join(" ")) || escapeHtml(name);
   return L.divIcon({
@@ -34,9 +34,9 @@ function makePinIcon(selected: boolean, accent: string, name: string) {
       </div>
     `,
     className: "atlas-pin-wrap",
-    iconSize: [42, 80],
-    iconAnchor: [21, 78],
-    popupAnchor: [0, -78],
+    iconSize: [42, 104],
+    iconAnchor: [21, 102],
+    popupAnchor: [0, -102],
   });
 }
 

@@ -1,12 +1,16 @@
 // Vanilla RFC4180-style CSV/TSV parser + smart column-alias mapping for the
-// atlas spreadsheet. No third-party dependency. Cap at 1000 rows.
+// atlas spreadsheet. No third-party dependency. The parser reads the entire
+// uploaded file; the only safety ceiling is a generous one that exists purely
+// to prevent a runaway browser tab from OOMing on truly enormous files.
 //
 // In addition to producing ready-to-map rows (with valid lat/lng), the parser
 // returns a separate `pending` list for rows that are otherwise valid but
 // lack coordinates. These rows are still searchable in the chat; a separate
 // geocode pass converts them to lat/lng afterwards.
 
-const MAX_ROWS = 1000;
+// Generous safety cap. Effectively "no cap"; only used to guard against
+// runaway inputs (e.g. corrupted multi-GB uploads).
+const MAX_ROWS = 50000;
 
 /** Final, fully-mapped asset with coords. */
 export type AtlasAsset = {
