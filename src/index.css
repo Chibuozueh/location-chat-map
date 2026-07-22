@@ -242,7 +242,7 @@
 .atlas-pin {
   position: relative;
   width: 42px;
-  height: 50px;
+  height: 80px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -250,7 +250,7 @@
 }
 .atlas-pin__dot {
   position: absolute;
-  inset: 18px 2px 2px 2px;
+  inset: 44px 2px 2px 2px;
   background: #6e0e1e;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
@@ -273,20 +273,20 @@
   top: 0;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 600;
   color: #0e0a0b;
   background: #faf7f2eb;
   border: 1px solid #e6dfd4;
   border-radius: 6px;
-  padding: 2px 5px;
-  line-height: 1.05;
+  padding: 2px 6px;
+  line-height: 1.1;
   text-align: center;
   letter-spacing: -0.005em;
   white-space: nowrap;
-  max-width: 70px;
+  max-width: 110px;
   text-overflow: ellipsis;
   overflow: hidden;
-  box-shadow: 0 1px 3px #0e0a0b1f;
+  box-shadow: 0 2px 6px #0e0a0b1f;
   pointer-events: none;
 }
