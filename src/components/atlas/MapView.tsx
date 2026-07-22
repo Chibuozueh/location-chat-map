@@ -12,23 +12,31 @@ import {
 const DEFAULT_CENTER: [number, number] = [33.74, -84.45];
 const DEFAULT_ZOOM = 12;
 
-function makePinIcon(selected: boolean, accent: string, label: string) {
+function makePinIcon(selected: boolean, accent: string, name: string) {
   const fill = selected
     ? "oklch(0.235 0.01 50)"
     : accent || "oklch(0.62 0.124 50)";
-  const safeLabel = label.replace(/[<>&"]/g, "");
+  // Show the first 2 words of the asset name so the dot itself is useful
+  // (e.g. "Senior / Zumba" instead of a single "S" letter).
+  const words = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  const labelHtml = words.map(escapeHtml).join("<br/>");
+  const safeLabel = escapeHtml(words.join(" ")) || escapeHtml(name);
   return L.divIcon({
     html: `
       <div class="atlas-pin" aria-label="${safeLabel}">
+        <div class="atlas-pin__label">${labelHtml}</div>
         <div class="atlas-pin__dot ${selected ? "atlas-pin__dot--selected" : ""}" style="background:${fill}"></div>
-        <div class="atlas-pin__label">${label.charAt(0)}</div>
       </div>
     `,
     className: "atlas-pin-wrap",
-    iconSize: [32, 40],
-    iconAnchor: [16, 38],
-    popupAnchor: [0, -34],
+    iconSize: [42, 50],
+    iconAnchor: [21, 46],
+    popupAnchor: [0, -42],
   });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[<>&"]/g, "");
 }
 
 function FlyTo({
@@ -89,7 +97,7 @@ export function MapView(props: {
               icon={icon}
               eventHandlers={{ click: () => onSelect(loc.slug) }}
             >
-              <Popup closeOnEscapeKey>
+              <Popup closeOnEscapeKey maxWidth={300} minWidth={240}>
                 <div className="p-4">
                   <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
                     {CATEGORY_LABEL[loc.category] ?? loc.category}
@@ -97,9 +105,18 @@ export function MapView(props: {
                   <div className="mt-1 font-display text-[15px] font-semibold leading-snug">
                     {loc.name}
                   </div>
-                  <div className="mt-1 text-[12px] text-muted-foreground">
-                    {loc.tagline}
-                  </div>
+                  {loc.tagline && (
+                    <div className="mt-1 text-[12px] text-muted-foreground">
+                      {loc.tagline}
+                    </div>
+                  )}
+                  {/* Description box — primary content surfaced when
+                      a pin is clicked. */}
+                  {loc.description && (
+                    <div className="mt-3 rounded-lg border border-border/60 bg-background/40 p-2.5 text-[12px] leading-relaxed text-foreground">
+                      {loc.description}
+                    </div>
+                  )}
                   <div className="mt-3 flex items-center gap-2 text-[12px]">
                     <span className="font-medium">★ {loc.rating.toFixed(1)}</span>
                     <span className="text-muted-foreground">
@@ -109,16 +126,18 @@ export function MapView(props: {
                       {PRICE_SYMBOL[loc.priceTier] ?? "—"}
                     </span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {loc.features.slice(0, 3).map((f) => (
-                      <span
-                        key={f}
-                        className="rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 text-[10px] text-secondary-foreground"
-                      >
-                        {FEATURE_LABEL[f] ?? f}
-                      </span>
-                    ))}
-                  </div>
+                  {loc.features.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {loc.features.slice(0, 3).map((f) => (
+                        <span
+                          key={f}
+                          className="rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 text-[10px] text-secondary-foreground"
+                        >
+                          {FEATURE_LABEL[f] ?? f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </Popup>
             </Marker>

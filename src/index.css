@@ -211,12 +211,12 @@
   border: 1px solid oklch(0.91 0.008 70);
   box-shadow:
     0 1px 0 oklch(0.92 0.01 70),
-    0 12px 28px -16px oklch(0.18 0.02 60 / 0.18);
+    0 12px 28px -16px oklch(0.18 0.02 60 / 0.22);
   padding: 0;
 }
 .leaflet-popup-content {
   margin: 0;
-  width: 240px !important;
+  width: 280px !important;
 }
 .leaflet-popup-tip {
   background: oklch(0.995 0.003 80);
@@ -231,30 +231,52 @@
 }
 .atlas-pin {
   position: relative;
-  width: 32px;
-  height: 40px;
+  width: 42px;
+  height: 50px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  pointer-events: auto;
 }
 .atlas-pin__dot {
   position: absolute;
-  inset: 0;
+  inset: 18px 2px 2px 2px;
   background: oklch(0.62 0.124 50);
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
   border: 2px solid oklch(0.99 0.003 80);
   box-shadow: 0 4px 10px -2px oklch(0.18 0.02 60 / 0.25);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
 }
 .atlas-pin__dot--selected {
   background: oklch(0.235 0.01 50);
-  transform: rotate(-45deg) scale(1.15);
+  transform: rotate(-45deg) scale(1.18);
+  box-shadow:
+    0 0 0 4px oklch(0.62 0.124 50 / 0.22),
+    0 6px 14px -2px oklch(0.18 0.02 60 / 0.32);
 }
 .atlas-pin__label {
-  position: relative;
-  font-size: 12px;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
   font-weight: 600;
-  color: oklch(0.99 0.003 80);
-  text-shadow: 0 1px 0 oklch(0.18 0.02 60 / 0.25);
-  margin-bottom: 8px;
+  color: oklch(0.18 0.02 60);
+  background: oklch(0.99 0.003 80 / 0.92);
+  border: 1px solid oklch(0.91 0.008 70);
+  border-radius: 6px;
+  padding: 2px 5px;
+  line-height: 1.05;
+  text-align: center;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  max-width: 70px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  box-shadow: 0 1px 3px oklch(0.18 0.02 60 / 0.12);
+  pointer-events: none;
 }
