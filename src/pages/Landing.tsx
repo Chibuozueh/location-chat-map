@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
-import { AnimatePresence, motion } from "framer-motion";
 import { LayoutGrid, Map as MapIcon, Minimize2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { AppHeader } from "@/components/atlas/AppHeader";
 import { AtlasHero } from "@/components/atlas/AtlasHero";
 import { MapView } from "@/components/atlas/MapView";
 import { ChatPanel } from "@/components/atlas/ChatPanel";
-import { LocationCard } from "@/components/atlas/LocationCard";
 import { LocationGrid } from "@/components/atlas/LocationGrid";
 import {
   ImportedDataProvider,
@@ -247,29 +245,6 @@ function LandingInner() {
                   })()}
                 />
               )}
-
-              {/* Floating detail card — overlaid on the LEFT of the map /
-                  sheet so the long-form description never gets clipped by
-                  the chat aside or the viewport's right edge. Anchored
-                  absolute inside the map's `.relative flex-1` wrapper so
-                  it follows the map's bounds instead of the viewport. */}
-              <AnimatePresence>
-                {selectedDoc && (
-                  <motion.div
-                    key="atlas-detail-card"
-                    initial={{ opacity: 0, x: -10, y: 0 }}
-                    animate={{ opacity: 1, x: 0, y: 0 }}
-                    exit={{ opacity: 0, x: -10, y: 0 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                    className="pointer-events-auto absolute left-3 top-3 z-30 w-[380px] max-w-[calc(100%-1.5rem)] sm:left-4 sm:top-4"
-                  >
-                    <LocationCard
-                      loc={selectedDoc as LocationDoc}
-                      onClose={() => setSelected(null)}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
             </div>
           </section>
 
@@ -287,8 +262,10 @@ function LandingInner() {
           )}
         </div>
 
-        {/* (Detail card moved inside the map's wrapper above — see the
-            `.relative flex-1` block where the floating card now lives.) */}
+        {/* Description overlay is rendered inside MapView itself (the
+            maroon-bordered DescriptionCard that anchors to the selected
+            pin). Rendering a second card here would clip the map and
+            double the description on screen. */}
 
         {/* Subtle footer */}
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
