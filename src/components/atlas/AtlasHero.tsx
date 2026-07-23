@@ -21,6 +21,9 @@ export function AtlasHero(props: {
     onExploreAssets,
     mapFocus,
   } = props;
+  // Native (seeded / curated) asset count — used as the fallback when no
+  // CSV has been uploaded yet so the hero always reflects a real total.
+  const nativeCount = props.total;
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
       <div className="absolute inset-0 gradient-paper" aria-hidden />
@@ -99,7 +102,10 @@ export function AtlasHero(props: {
           className="flex flex-col justify-center gap-3 md:items-end"
         >
           <div className="grid grid-cols-2 gap-2 md:gap-3">
-            <AssetsStat value={uploadedCount} />
+            <AssetsStat
+              uploadedCount={uploadedCount}
+              nativeCount={nativeCount}
+            />
             <Stat label="open now" value={openNow} />
           </div>
           <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-[11.5px] text-muted-foreground backdrop-blur">
@@ -137,11 +143,20 @@ function Stat({
 }
 
 /**
- * Hero "assets" stat — styled with Morehouse maroon prominence. Before any
- * CSV upload renders an em-dash; after upload, the parsed CSV row count.
+ * Hero "assets" stat — styled with Morehouse maroon prominence.
+ * Shows the uploaded-CSV row count when a file is loaded, otherwise the
+ * native (curated seed) asset count so the number is always grounded in
+ * real rows rather than an em-dash.
  */
-function AssetsStat({ value }: { value: number | null }) {
-  const hasUpload = value !== null;
+function AssetsStat({
+  uploadedCount,
+  nativeCount,
+}: {
+  uploadedCount: number | null;
+  nativeCount: number;
+}) {
+  const hasUpload = uploadedCount !== null;
+  const displayValue = hasUpload ? uploadedCount : nativeCount;
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
@@ -160,7 +175,7 @@ function AssetsStat({ value }: { value: number | null }) {
             : "text-[34px] font-extrabold text-muted-foreground/60"
         }`}
       >
-        {hasUpload ? value : "—"}
+        {displayValue}
       </div>
       <div className="mt-2 flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.18em] text-[#6e0e1e]">
         <span
@@ -168,7 +183,7 @@ function AssetsStat({ value }: { value: number | null }) {
             hasUpload ? "bg-[#6e0e1e]" : "bg-muted-foreground/40"
           }`}
         />
-        {hasUpload ? "uploaded assets" : "assets"}
+        assets
       </div>
     </motion.div>
   );
