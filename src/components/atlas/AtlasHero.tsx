@@ -5,7 +5,6 @@ export function AtlasHero(props: {
   total: number;
   uploadedCount: number | null;
   openNow: number;
-  avgRating: number;
   cities: string[];
   /** Toggles the focused-map mode (also scrolls the map into view). */
   onExplore: () => void;
@@ -17,7 +16,6 @@ export function AtlasHero(props: {
   const {
     uploadedCount,
     openNow,
-    avgRating,
     cities,
     onExplore,
     onExploreAssets,
@@ -27,7 +25,7 @@ export function AtlasHero(props: {
     <div className="relative overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
       <div className="absolute inset-0 gradient-paper" aria-hidden />
       <div
-        className="absolute inset-0 grid-paper opacity-[0.35]\"
+        className="absolute inset-0 grid-paper opacity-[0.35]"
         aria-hidden
       />
       <div className="relative grid grid-cols-1 gap-6 px-6 py-8 md:grid-cols-[1.4fr_1fr] md:px-10 md:py-12">
@@ -100,9 +98,8 @@ export function AtlasHero(props: {
           transition={{ delay: 0.15 }}
           className="flex flex-col justify-center gap-3 md:items-end"
         >
-          <div className="grid grid-cols-3 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 gap-2 md:gap-3">
             <AssetsStat value={uploadedCount} />
-            <Stat label="avg score" value={avgRating.toFixed(1)} suffix="★" />
             <Stat label="open now" value={openNow} />
           </div>
           <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-[11.5px] text-muted-foreground backdrop-blur">

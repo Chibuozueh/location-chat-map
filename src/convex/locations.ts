@@ -39,11 +39,6 @@ export const topPicks = query({
       counts: {
         total: all.length,
         openNow: all.filter((l) => isOpenAt(l.hours as any)).length,
-        avgRating:
-          all.length === 0
-            ? 0
-            : Math.round((all.reduce((s, l) => s + l.rating, 0) / all.length) * 10) /
-              10,
       },
     };
   },

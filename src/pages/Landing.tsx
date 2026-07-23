@@ -66,6 +66,14 @@ function LandingInner() {
       importedState.failed.length >
     0;
 
+  // When the native CSV is auto-loaded (or a manual upload), the CSV
+  // becomes the single source of truth for the atlas — the curated
+  // Convex seeds are dropped so the map + chat only ever see the
+  // uploaded rows. This matches the user's intent of "the file is the
+  // asset map".
+  const nativeSourceActive = importedState.source === "native";
+  const useReplace = nativeSourceActive || hasAnyImport;
+
   const merged = useMemo<{
     mappable: (LocationDoc | AtlasAsset)[];
     chatOnly: (LocationDoc | AtlasAsset)[];
@@ -79,7 +87,7 @@ function LandingInner() {
           ...importedState.pending.map((p) => p.doc),
           ...importedState.failed.map((f) => f.doc),
         ],
-        { replace: hasAnyImport },
+        { replace: useReplace },
       ),
     [
       seeded,
@@ -87,7 +95,7 @@ function LandingInner() {
       importedState.chatOnly,
       importedState.pending,
       importedState.failed,
-      hasAnyImport,
+      useReplace,
     ],
   );
 
@@ -165,7 +173,6 @@ function LandingInner() {
               : null
           }
           openNow={top?.counts.openNow ?? 0}
-          avgRating={top?.counts.avgRating ?? 0}
           cities={top?.cities ?? []}
           onExplore={handleExploreMap}
           onExploreAssets={handleExploreAssets}

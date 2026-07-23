@@ -62,6 +62,14 @@ type ImportedState = {
    *  so the user knows if the atlas is showing a manually-uploaded CSV
    *  vs. a static reference file shipped in `public/data/`. */
   source: "native" | "upload" | null;
+  /** Pre-validation gate. False while the FIRST post-import pass is still
+   *  running MapChat `normalizeAddress` + the geocode cascade over every
+   *  pending row. While false, `state.rows` (and `state.failed`) are held
+   *  empty so the map + chat show nothing from the import until the AI
+   *  pre-validation completes end-to-end. Manual Retry clicks (after the
+   *  gate has opened once) preserve `released: true` so the UI doesn't
+   *  re-lock. */
+  released: boolean;
 };
 
 const EMPTY_PROGRESS: GeocodeProgress = {
@@ -90,6 +98,7 @@ const EMPTY: ImportedState = {
   rejected: 0,
   progress: EMPTY_PROGRESS,
   source: null,
+  released: true,
 };
 
 /** Filenames probed (in order) for the native reference CSV. Vite serves
@@ -151,8 +160,17 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // Cancellation flag so an external `clear()` aborts the loop cleanly.
   const cancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
+  // Saved off `state.chatOnly` (PO Box / address-only rows) at the start
+  // of each import. The pre-validation gate keeps `state.chatOnly` empty
+  // so neither the map's cluster pass nor the chat's search sees any
+  // imported data; the post-loop `flush` restores these once validation
+  // completes.
+  const heldChatOnlyRef = useRef<AtlasAsset[]>([]);
+
   const importFromFile = useCallback(async (file: File) => {
     setImporting(true);
+    cancelRef.current.cancelled = true;
+    await new Promise((r) => setTimeout(r, 0));
     cancelRef.current.cancelled = false;
     try {
       const text = await file.text();
@@ -171,6 +189,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * Import a CSV string into the provider. Shared by the file-picker flow
    * and the native auto-loader so both paths reuse the same parser +
    * state-update + toast logic.
+   *
+   * Pre-validation gate: if there are pending rows, we hold `rows`,
+   * `chatOnly`, and `failed` empty until the geocode loop finishes — the
+   * MapChat `normalizeAddress` action runs as Step 2 of every pending
+   * row, so once the loop completes we have a fully-validated set ready
+   * for the map + chat.
    */
   const importFromText = useCallback(
     async (
@@ -178,6 +202,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       filename: string,
       source: "native" | "upload",
     ): Promise<void> => {
+      // Cancel any in-flight loop from a previous import so its trailing
+      // setState can't corrupt this brand-new state.
+      cancelRef.current.cancelled = true;
+      await new Promise((r) => setTimeout(r, 0));
+
       const summary = importCsv(text, filename);
       const readyCount = summary.rows.length;
       const pendingCount = summary.pending.length;
@@ -187,6 +216,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         toast.error(
           `No valid rows in ${filename}. Each row needs at least a Name.`,
         );
+        cancelRef.current.cancelled = false;
         return;
       }
 
@@ -196,11 +226,18 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         doc: r.doc,
       }));
       const chatOnly = summary.chatOnly.map((r) => r.doc);
+      // Saved for the post-loop flush — the gate keeps `chatOnly` empty
+      // until the pre-validation pass completes, then restores it.
+      heldChatOnlyRef.current = chatOnly;
+
+      const gateOpen = pendingCount === 0;
 
       setState({
-        rows: ready,
+        // Hide all rows during the gate so neither map nor chat can paint
+        // any imported data until the AI pre-validation finishes.
+        rows: gateOpen ? ready : [],
         pending,
-        chatOnly,
+        chatOnly: gateOpen ? chatOnly : [],
         failed: [],
         filename: summary.filename,
         importedAt: Date.now(),
@@ -221,17 +258,22 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           active: pendingCount > 0,
         },
         source,
+        released: gateOpen,
       });
+
+      cancelRef.current.cancelled = false;
 
       const skipped = summary.rejected;
       const placed = readyCount + chatOnlyCount;
       const pendingNote =
-        pendingCount > 0 ? ` · geocoding ${pendingCount}` : "";
+        pendingCount > 0
+          ? ` · pre-validating ${pendingCount} address${pendingCount === 1 ? "" : "es"} via MapChat`
+          : "";
       const chatOnlyNote =
         chatOnlyCount > 0 ? ` · ${chatOnlyCount} address-only` : "";
       const sourceLabel = source === "native" ? "public/data" : "your upload";
       toast.success(
-        `Showing only ${sourceLabel}: ${placed} ${placed === 1 ? "row" : "rows"} from ${filename}` +
+        `${placed} ${placed === 1 ? "row" : "rows"} from ${filename}` +
           (skipped ? ` · ${skipped} skipped` : "") +
           chatOnlyNote +
           pendingNote,
@@ -416,8 +458,66 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     if (!state.pending.length) return;
     if (!state.progress.active) return;
     const cancel = cancelRef.current;
+    // Snapshot identifiers so a trailing setState from this loop can't
+    // pollute a freshly-imported or cleared state — any later setState
+    // bails when either ID has rotated forward.
+    const snapImportedAt = state.importedAt;
+    const snapRetryNonce = state.retryNonce;
 
     const run = async () => {
+      // Local accumulators. Stays empty for retry passes whose `state.rows`
+      // already has rows visible to the user — those flush inline below in
+      // the inner setState. For the INITIAL pre-validation pass (when
+      // `state.rows` started empty), this is what gets flushed at the end.
+      const placedAcc: AtlasAsset[] = [];
+      const failedAcc: Array<{
+        id: string;
+        reason: string;
+        doc: AtlasAsset;
+      }> = [];
+      const consumedIds = new Set<string>();
+
+      /**
+       * Single cancel-aware flush point. Called at end-of-pass to release
+       * the validated set to the map + chat, or on cancel to leave the
+       * state untouched (the user explicitly aborted).
+       */
+      const flush = (placed: AtlasAsset[], failed: typeof failedAcc) => {
+        setState((prev) => {
+          if (cancel.cancelled) return prev;
+          if (prev.importedAt !== snapImportedAt) return prev;
+          if (prev.retryNonce !== snapRetryNonce) return prev;
+          // Restore the held chatOnly (PO Box / address-only) rows now
+          // that every pending row has been processed by MapChat. Retry
+          // passes never touch chatOnly (it was already restored on the
+          // initial flush); heldChatOnlyRef stays empty until the next
+          // importFromText.
+          const restoreChatOnly = heldChatOnlyRef.current;
+          heldChatOnlyRef.current = [];
+          if (!placed.length && !failed.length && !restoreChatOnly.length) {
+            return prev.released
+              ? prev
+              : {
+                  ...prev,
+                  chatOnly: restoreChatOnly,
+                  released: true,
+                  progress: { ...prev.progress, active: false },
+                };
+          }
+          return {
+            ...prev,
+            rows: [...prev.rows, ...placed],
+            failed: [...prev.failed, ...failed],
+            chatOnly: restoreChatOnly,
+            progress: {
+              ...prev.progress,
+              failed: prev.progress.failed + failed.length,
+            },
+            released: true, // gate opens on the first flush
+          };
+        });
+      };
+
       for (let i = 0; i < state.pending.length; i++) {
         if (cancel.cancelled) return;
         const item = state.pending[i];
@@ -553,39 +653,42 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
         if (cancel.cancelled) return;
 
+        // Accumulate locally for the flush.
+        if (coord && accuracy) {
+          placedAcc.push({
+            ...doc,
+            lat: coord.lat,
+            lng: coord.lng,
+            needsGeocode: false,
+            coordAccuracy: accuracy,
+          });
+        } else {
+          failedAcc.push({
+            id: item.id,
+            reason: key
+              ? `Could not locate "${doc.address}, ${doc.city}, ${doc.state} ${doc.postalCode}".`
+              : "Row has no street or ZIP for geocoding.",
+            doc,
+          });
+        }
+        consumedIds.add(item.id);
+
+        // Per-row setState only updates progress + consumes one slot from
+        // `state.pending`. The actual rows / failed are flushed at the end
+        // so the pre-validation gate stays closed until EVERY pending row
+        // has been processed.
         setState((prev) => {
           if (cancel.cancelled) return prev;
-          if (prev.importedAt !== state.importedAt) return prev;
+          if (prev.importedAt !== snapImportedAt) return prev;
+          if (prev.retryNonce !== snapRetryNonce) return prev;
 
           const remainingPending = prev.pending.filter(
             (p) => p.id !== item.id,
           );
-          let nextRows = prev.rows;
-          if (coord && accuracy) {
-            const placed: AtlasAsset = {
-              ...doc,
-              lat: coord.lat,
-              lng: coord.lng,
-              needsGeocode: false,
-              coordAccuracy: accuracy,
-            };
-            nextRows = [...prev.rows, placed];
-          } else {
-            prev.failed.push({
-              id: item.id,
-              reason: key
-                ? `Could not locate "${doc.address}, ${doc.city}, ${doc.state} ${doc.postalCode}".`
-                : "Row has no street or ZIP for geocoding.",
-              doc,
-            });
-          }
-
           const done = prev.progress.done + 1;
           return {
             ...prev,
-            rows: nextRows,
             pending: remainingPending,
-            failed: prev.failed,
             progress: {
               ...prev.progress,
               done,
@@ -611,8 +714,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
               geminiError:
                 prev.progress.geminiError +
                 (llmOutcome === "errored" ? 1 : 0),
-              failed: !coord ? prev.progress.failed + 1 : prev.progress.failed,
-              active: done < prev.progress.total,
+              active: remainingPending.length > 0,
             },
           };
         });
@@ -629,6 +731,10 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           await new Promise((r) => setTimeout(r, LLM_NORMALIZE_SPACING_MS));
         }
       }
+
+      // Post-loop flush. Snapshot checks inside `flush()` guard against
+      // races where the user cleared or re-imported mid-pass.
+      flush(placedAcc, failedAcc);
     };
 
     void run();

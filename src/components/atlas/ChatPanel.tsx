@@ -332,6 +332,16 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     importedState.rows.length > 0 ||
     importedState.pending.length > 0 ||
     importedState.failed.length > 0;
+  /**
+   * The atlas pre-validates every pending row through the MapChat
+   * Gemini + deterministic cascade before releasing them to the map
+   * or to chat search. Chat uses the imported set as its reference
+   * data — so during the gate the visible context is empty (only
+   * the 12 curated seeds), and the chip explicitly says so.
+   */
+  const nativeCsvActive = importedState.source === "native";
+  const preValidating =
+    importedState.pending.length > 0 && !importedState.released;
   const merged = useMemo<{
     mappable: (LocationDoc | AtlasAsset)[];
     chatOnly: (LocationDoc | AtlasAsset)[];
@@ -354,6 +364,24 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
       hasImports,
     ],
   );
+
+  // During the pre-validation gate, the only reference data the chat
+  // can lean on is the curated Convex seeds. Once the gate opens, both
+  // the seeds (if hasImports=false) AND the validated imported rows
+  // become referenceable for Gemini narration.
+  const referenceCount =
+    preValidating && nativeCsvActive
+      ? seeded.length
+      : merged.mappable.length + merged.chatOnly.length;
+  const referenceLabel = preValidating
+    ? nativeCsvActive
+      ? `Pre-validating ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"} via MapChat\u2026`
+      : `Geocoding ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"}\u2026`
+    : hasImports
+      ? importedState.source === "native"
+        ? `${referenceCount} from public/data/${importedState.filename ?? "atlas.csv"}`
+        : `${referenceCount} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
+      : "12 curated Southwest Atlanta assets";
 
   const resultServer = useQuery(
     api.locations.search,
@@ -514,12 +542,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading{" "}
-            {hasImports
-              ? importedState.source === "native"
-                ? `${merged.mappable.length + merged.chatOnly.length} from public/data/${importedState.filename ?? "atlas.csv"}`
-                : `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
-              : "12 curated Southwest Atlanta assets"}
+            Reading {referenceLabel}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
