@@ -390,6 +390,24 @@ export function MapView(props: {
     onOpenPicker,
     onClosePicker,
   } = props;
+
+  /**
+   * Drop any cluster whose lat/lng is non-finite BEFORE we feed it to
+   * Leaflet. SEED_LOCATIONS rows added without hand-coded coordinates
+   * (e.g. the second wave of Atlanta Beltline programs) produce
+   * `lat: NaN, lng: NaN` from translateSeed, and react-leaflet throws
+   * `Invalid LatLng object: (NaN, NaN)` if a Marker receives them.
+   * These rows remain in `merged.mappable` so they still appear in
+   * the LocationGrid sheet and in chat search hits — they just don't
+   * plot a pin until you give them real coordinates.
+   */
+  const safeClusters = useMemo(
+    () =>
+      clusters.filter(
+        (c) => Number.isFinite(c.lat) && Number.isFinite(c.lng),
+      ),
+    [clusters],
+  );
   const [anchor, setAnchor] = useState<AnchorPoint>({
     x: 0,
     y: 0,
@@ -404,36 +422,36 @@ export function MapView(props: {
     lng: number;
   } | null>(() => {
     if (pickerClusterKey) {
-      const c = clusters.find((cl) => cl.key === pickerClusterKey);
+      const c = safeClusters.find((cl) => cl.key === pickerClusterKey);
       if (c) return { lat: c.lat, lng: c.lng };
     }
     if (selectedSlug) {
-      for (const c of clusters) {
+      for (const c of safeClusters) {
         const m = c.members.find((mm) => mm.slug === selectedSlug);
         if (m) return { lat: m.lat, lng: m.lng };
       }
     }
     return null;
-  }, [clusters, selectedSlug, pickerClusterKey]);
+  }, [safeClusters, selectedSlug, pickerClusterKey]);
 
   // Resolve the active cluster for the picker.
   const pickerCluster = useMemo(
     () =>
       pickerClusterKey
-        ? clusters.find((c) => c.key === pickerClusterKey) ?? null
+        ? safeClusters.find((c) => c.key === pickerClusterKey) ?? null
         : null,
-    [clusters, pickerClusterKey],
+    [safeClusters, pickerClusterKey],
   );
 
   // Resolve the active member for the description card.
   const selectedLoc = useMemo<LocationDoc | null>(() => {
     if (!selectedSlug) return null;
-    for (const c of clusters) {
+    for (const c of safeClusters) {
       const m = c.members.find((mm) => mm.slug === selectedSlug);
       if (m) return m as LocationDoc;
     }
     return null;
-  }, [clusters, selectedSlug]);
+  }, [safeClusters, selectedSlug]);
 
   // Where to fly to. Mutually exclusive — picker wins for flyTo target.
   const flyTarget = useMemo<[number, number]>(() => {
@@ -455,10 +473,10 @@ export function MapView(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedSlug, pickerClusterKey, onSelect, onClosePicker]);
 
-  // Count assets spanned by all clusters for the corner badge.
+  // Count assets spanned by all safeClusters for the corner badge.
   const totalAssetCount = useMemo(
-    () => clusters.reduce((acc, c) => acc + c.count, 0),
-    [clusters],
+    () => safeClusters.reduce((acc, c) => acc + c.count, 0),
+    [safeClusters],
   );
 
   return (
@@ -485,7 +503,7 @@ export function MapView(props: {
             if (selectedSlug) onSelect(null);
           }}
         />
-        {clusters.map((cluster) => {
+        {safeClusters.map((cluster) => {
           const memberSlugs = cluster.members.map((m) => m.slug);
           const isSelected = memberSlugs.includes(selectedSlug ?? "");
           const isPicker = cluster.key === pickerClusterKey;
@@ -532,7 +550,7 @@ export function MapView(props: {
         className="pointer-events-none absolute left-4 top-4 flex items-center gap-2 rounded-full border border-border/60 bg-card/90 px-3 py-1.5 text-[11px] text-muted-foreground shadow-card backdrop-blur"
       >
         <span className="inline-block h-2 w-2 rounded-full bg-accent" />
-        {totalAssetCount} assets · {clusters.length} locations · Southwest
+        {totalAssetCount} assets · {safeClusters.length} locations · Southwest
         Atlanta
       </motion.div>
 

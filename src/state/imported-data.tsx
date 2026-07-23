@@ -819,6 +819,12 @@ export function seedLocationsToAtlasAssets(rows: Array<any>): AtlasAsset[] {
 export function clusterByAddress(assets: AnyAsset[]): Cluster[] {
   const buckets = new Map<string, { cluster: Cluster }>();
   for (const a of assets) {
+    // Skip rows that lack finite lat/lng — they came from a SEED_LOCATIONS
+    // entry (or a CSV import) that wasn't geocoded yet, so dropping them
+    // here keeps Leaflet's Marker from choking on `Invalid LatLng (NaN,
+    // NaN)`. The rows remain in `merged.mappable` so the sheet view and
+    // chat search still see them.
+    if (!Number.isFinite(a.lat) || !Number.isFinite(a.lng)) continue;
     const key = clusterKeyOf(a);
     const exist = buckets.get(key);
     if (exist) {
