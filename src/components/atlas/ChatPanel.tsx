@@ -148,32 +148,6 @@ export function ChatPanel(props: {
   const result = (resultLocal ?? resultServer) as SearchResponse | undefined;
   const isLoading = pendingQuestion !== null && result === undefined;
 
-  // Reset the welcome message if the user imports data so the next "thanks"
-  // hint reflects what the chat is reading over.
-  const lastImportSig = importedState.importedAt;
-  useEffect(() => {
-    if (!lastImportSig) return;
-    setMessages((prev) => {
-      const i = prev.findIndex(
-        (m) => m.role === "user" && prev[prev.length - 1]?.id !== m.id,
-      );
-      // Append a system note for clarity; idempotent on signature.
-      const stamp = `import:${lastImportSig}`;
-      if (prev.some((m) => (m as any)._stamp === stamp)) return prev;
-      const filename = importedState.filename ?? "your spreadsheet";
-      return [
-        ...prev,
-        {
-          id: stamp,
-          role: "atlas",
-          content: `Now reading ${importedState.rows.length} ${importedState.rows.length === 1 ? "row" : "rows"} from ${filename} — ask me anything about those assets.`,
-          matched: [],
-        } as any,
-      ];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastImportSig, importedState.filename, importedState.rows.length]);
-
   useEffect(() => {
     if (!pendingQuestion || !result) return;
     setMessages((prev) => {
