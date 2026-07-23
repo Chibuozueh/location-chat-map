@@ -330,6 +330,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
    *  resolved primary provider; updated on every successful fallback so the
    *  footer hint can tell the user when we silently swapped providers. */
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -479,7 +480,10 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     if (!smartAssistant) return;
 
     const allRows = [...merged.mappable, ...merged.chatOnly] as (LocationDoc | AtlasAsset)[];
-    const ctx = buildFullTableContext(allRows);
+    const tableCtx = buildFullTableContext(allRows);
+    const now = new Date();
+    const timeCtx = `CURRENT TIME: ${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(now)} (Eastern Time)\nUse this to determine which assets are currently open, what day of the week it is, and to answer any time-related questions accurately.`;
+    const ctx = `${timeCtx}\n\n${tableCtx}`;
     triggerLlm({ question: pendingQuestion, context: ctx })
       .then((res) => {
         if (res.providerLabel) setActiveProvider(res.providerLabel);
@@ -516,6 +520,30 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     // We intentionally only re-run when the deterministic result flipped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingQuestion, result, smartAssistant, patchMessage, triggerLlm]);
+
+  // Live clock — ticks every 30s to keep "open now" answers accurate.
+  useEffect(() => {
+    const id = setInterval(() => setCurrentTime(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const atlanticTime = useMemo(() => {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(currentTime);
+  }, [currentTime]);
+
+  const atlanticDayPart = useMemo(() => {
+    const h = new Date(
+      currentTime.toLocaleString("en-US", { timeZone: "America/New_York" }),
+    ).getHours();
+    if (h < 12) return "morning";
+    if (h < 17) return "afternoon";
+    return "evening";
+  }, [currentTime]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -568,7 +596,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading {referenceLabel}
+            Reading {referenceLabel} · {atlanticTime} ET
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
