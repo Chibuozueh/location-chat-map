@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { motion } from "framer-motion";
-import { MorehouseLogo, MorehouseMark } from "@/components/atlas/MorehouseLogo";
+import { LsiLogo, LsiMark } from "@/components/atlas/LsiLogo";
 
 export function AppHeader() {
   return (
@@ -11,11 +11,12 @@ export function AppHeader() {
             initial={{ rotate: -8 }}
             animate={{ rotate: 0 }}
             transition={{ type: "spring", stiffness: 220, damping: 14 }}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-card shadow-card ring-soft overflow-hidden"
+            className="inline-flex items-center justify-center rounded-lg bg-card shadow-card ring-soft overflow-hidden"
+            style={{ width: 36, height: 42 }}
           >
-            <MorehouseMark size={22} />
+            <LsiMark size={26} />
           </motion.span>
-          <MorehouseLogo size="sm" withWordmark={false} className="-ml-1" />
+          <LsiLogo size="sm" withWordmark={false} className="-ml-1" />
           <span className="hidden h-7 w-px bg-border/70 sm:block" />
           <div className="hidden leading-tight sm:block">
             <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
