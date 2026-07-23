@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { LayoutGrid, Map as MapIcon } from "lucide-react";
@@ -11,6 +11,7 @@ import { LocationCard } from "@/components/atlas/LocationCard";
 import { LocationGrid } from "@/components/atlas/LocationGrid";
 import {
   ImportedDataProvider,
+  clusterByAddress,
   mergeAssets,
   useImportedData,
 } from "@/state/imported-data";
@@ -24,6 +25,7 @@ function LandingInner() {
   const { state: importedState } = useImportedData();
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [pickerClusterKey, setPickerClusterKey] = useState<string | null>(null);
   const [view, setView] = useState<"map" | "sheet">("map");
   const exploreRef = useRef<HTMLDivElement | null>(null);
 
@@ -92,6 +94,26 @@ function LandingInner() {
     [merged, selected],
   );
 
+  // Group mappable assets by address so the map renders one pin per shared
+  // address. Members of each cluster are preserved (used for the picker).
+  const clusters = useMemo(
+    () => clusterByAddress(merged.mappable as LocationDoc[]),
+    [merged.mappable],
+  );
+
+  // Wrappers that keep the picker and selection mutually exclusive.
+  const handleSelectSlug = useCallback((slug: string | null) => {
+    if (slug !== null) setPickerClusterKey(null);
+    setSelected(slug);
+  }, []);
+  const handleOpenPicker = useCallback((key: string) => {
+    setSelected(null);
+    setPickerClusterKey(key);
+  }, []);
+  const handleClosePicker = useCallback(() => {
+    setPickerClusterKey(null);
+  }, []);
+
   function scrollToMap() {
     exploreRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -157,15 +179,27 @@ function LandingInner() {
 
             {view === "map" ? (
               <MapView
-                locations={merged.mappable as LocationDoc[]}
+                clusters={clusters}
                 selectedSlug={selected}
-                onSelect={setSelected}
+                pickerClusterKey={pickerClusterKey}
+                onSelect={handleSelectSlug}
+                onOpenPicker={handleOpenPicker}
+                onClosePicker={handleClosePicker}
               />
             ) : (
               <LocationGrid
                 locations={[...merged.mappable, ...merged.chatOnly] as LocationDoc[]}
                 selectedSlug={selected}
-                onSelect={setSelected}
+                onSelect={handleSelectSlug}
+                clusterSizes={((): Record<string, number> => {
+                  const out: Record<string, number> = {};
+                  for (const c of clusters) {
+                    if (c.count > 1) {
+                      for (const m of c.members) out[m.slug] = c.count;
+                    }
+                  }
+                  return out;
+                })()}
               />
             )}
           </section>

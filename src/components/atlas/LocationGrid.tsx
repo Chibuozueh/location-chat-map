@@ -6,8 +6,10 @@ export function LocationGrid(props: {
   locations: LocationDoc[];
   selectedSlug: string | null;
   onSelect: (slug: string) => void;
+  /** For each slug, the size of its address cluster (only >1 entries kept). */
+  clusterSizes?: Record<string, number>;
 }) {
-  const { locations, selectedSlug, onSelect } = props;
+  const { locations, selectedSlug, onSelect, clusterSizes } = props;
   return (
     <div className="h-full w-full overflow-hidden rounded-2xl border border-border/70 bg-card shadow-card">
       <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
@@ -36,6 +38,7 @@ export function LocationGrid(props: {
         <ul className="divide-y divide-border/60">
           {locations.map((l, i) => {
             const selected = l.slug === selectedSlug;
+            const sharedWith = clusterSizes?.[l.slug];
             return (
               <motion.li
                 key={l.slug}
@@ -57,8 +60,18 @@ export function LocationGrid(props: {
                       {l.name.charAt(0)}
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate font-medium text-foreground">
-                        {l.name}
+                      <span className="flex items-center gap-1.5">
+                        <span className="block truncate font-medium text-foreground">
+                          {l.name}
+                        </span>
+                        {sharedWith ? (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-1.5 py-px text-[9.5px] font-semibold tabular-nums text-[#6e0e1e]"
+                            title={`${sharedWith} assets share this address`}
+                          >
+                            ×{sharedWith}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {l.address}

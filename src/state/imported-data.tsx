@@ -362,6 +362,77 @@ export function useImportedData() {
 
 export type AnyAsset = LocationDoc | AtlasAsset;
 
+/**
+ * Group of assets that share the same address. The map renders ONE marker
+ * per cluster (with a count badge); the picker card lists member rows so
+ * the user can drill into any one of them.
+ *
+ * Coordinates are taken from the first member (cluster members always share
+ * the same lat/lng after geocoding — the same address resolves to one point).
+ */
+export type Cluster = {
+  /** Stable normalized address key. */
+  key: string;
+  /** Display address used for the picker header. */
+  address: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  lat: number;
+  lng: number;
+  members: AnyAsset[];
+  count: number;
+};
+
+/**
+ * Normalize an address for cluster-key comparison. We collapse case +
+ * trim and join `address | city | state | postal`. Lightweight (no
+ * geocoder normalization) — sufficient for "two CSVs that say the same
+ * address share a cluster" while still letting trivially different
+ * addresses land in separate clusters.
+ */
+export function clusterKeyOf(a: Pick<AnyAsset, "address" | "city" | "state" | "postalCode">): string {
+  const norm = (s?: string) => (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  return [norm(a.address), norm(a.city), norm(a.state), norm(a.postalCode)]
+    .filter(Boolean)
+    .join("|");
+}
+
+/**
+ * Group assets by normalized address key. Single-member clusters are still
+ * returned (with count=1) so the map/grid can render them consistently.
+ *
+ * Order is preserved: the first member of each cluster becomes its
+ * representative. Assets without an address/city fall into their own
+ * single-member cluster keyed differently so they never merge by accident.
+ */
+export function clusterByAddress(assets: AnyAsset[]): Cluster[] {
+  const buckets = new Map<string, { cluster: Cluster }>();
+  for (const a of assets) {
+    const key = clusterKeyOf(a);
+    const exist = buckets.get(key);
+    if (exist) {
+      exist.cluster.members.push(a);
+      exist.cluster.count = exist.cluster.members.length;
+    } else {
+      buckets.set(key, {
+        cluster: {
+          key,
+          address: a.address ?? "",
+          city: a.city ?? "",
+          state: a.state ?? "",
+          postalCode: a.postalCode ?? "",
+          lat: a.lat,
+          lng: a.lng,
+          members: [a],
+          count: 1,
+        },
+      });
+    }
+  }
+  return Array.from(buckets.values()).map((b) => b.cluster);
+}
+
 /** Union seeded + imported with the imported overriding seeded by slug
  *  (case-insensitive). Seeded order is preserved; brand-new imports append.
  *  Rows with non-finite lat/lng remain in `chatOnly` so the chat can still
