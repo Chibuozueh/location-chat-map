@@ -422,11 +422,11 @@ async function callNebius(
 
 /**
  * Build a ProviderConfig snapshot for the dedicated map / address-normalization
- * key. Returns null when no map key is configured (caller falls through to the
- * chat chain). We use the **same Gemini transport as the chat's Gemini
- * provider** because `MAP_CHAT_KEY` is almost certainly a Gemini key with its
- * own quota — keep the wire format identical so a future switch to a
- * different provider is a localized change.
+ * key. Returns null when no map key is configured (caller falls through to
+ * the Cerebras backup). We use the **same Gemini transport as the chat's
+ * Gemini provider** because `MAP_CHAT_KEY` is almost certainly a Gemini key
+ * with its own quota — keep the wire format identical so a future switch to
+ * a different provider is a localized change.
  *
  * Per-key knobs (overridable via env):
  *   - MAP_CHAT_MODEL        (default: gemini-flash-latest)
@@ -441,6 +441,51 @@ function buildMapChatConfig(): ProviderConfig | null {
     baseUrl: process.env.MAP_CHAT_BASE_URL ?? GEMINI_DEFAULT_BASE,
     label: "MapChat · gemini-flash-latest",
     keyEnv: envName ?? "MAP_CHAT_KEY",
+  };
+}
+
+/**
+ * Accepted env-var names for the **map's fallback** provider.
+ *
+ * Cerebras (`api.cerebras.ai/v1/chat/completions`) is the OpenAI-compatible
+ * fast-inference endpoint the user wired in as a backup after MapChat started
+ * rate-limiting on free-tier Gemini quotas. We keep the map chain at TWO
+ * providers — MapChat first, Cerebras second — and never reach for the
+ * chat chain.
+ */
+const CEREBRAS_KEY_ENV_NAMES = [
+  "CEREBRAS_API_KEY",
+  "CEREBRAS_KEY",
+] as const;
+
+function readCerebrasKey(): { key: string | null; envName: string | null } {
+  for (const name of CEREBRAS_KEY_ENV_NAMES) {
+    const v = process.env[name];
+    if (v && v.trim().length > 0) return { key: v.trim(), envName: name };
+  }
+  return { key: null, envName: null };
+}
+
+/**
+ * Build a ProviderConfig snapshot for the map's Cerebras fallback. The
+ * wire format (`{baseUrl}/chat/completions` + `Authorization: Bearer
+ * <key>`) mirrors the OpenAI-compatible transport, so the same call
+ * helper used by Nebius handles the round-trip unchanged.
+ *
+ * Per-key knobs (overridable via env):
+ *   - CEREBRAS_MODEL        (default: gpt-oss-120b)
+ *   - CEREBRAS_BASE_URL     (default: https://api.cerebras.ai/v1)
+ */
+function buildMapCerebrasConfig(): ProviderConfig | null {
+  const { key, envName } = readCerebrasKey();
+  if (!key) return null;
+  return {
+    apiKey: key,
+    model: process.env.CEREBRAS_MODEL ?? "gpt-oss-120b",
+    baseUrl:
+      process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
+    label: "Cerebras · gpt-oss-120b",
+    keyEnv: envName ?? "CEREBRAS_API_KEY",
   };
 }
 
@@ -466,41 +511,158 @@ function buildMapChatConfig(): ProviderConfig | null {
  *      normalization entirely. The row still goes through the
  *      deterministic cascade.
  */
+/** Dispatch to the right transport based on the cfg's label. The map chain
+ *  uses both Gemini (native REST for MapChat) and Cerebras (OpenAI-
+ *  compatible). Cerebras / Nebius / MapChat all share the OpenAI-compat
+ *  wire format, but we keep this dispatch explicit so the helper used by
+ *  the chat (`callLLM`) and the one used by the map (`callAddressNormalizer`)
+ *  can diverge without breaking each other. */
+function callForMapCfg(
+  cfg: ProviderConfig,
+  opts: CallOpts,
+): Promise<LLMResult> {
+  return /Cerebras/.test(cfg.label)
+    ? callCerebras(cfg, opts)
+    : cfg.label.startsWith("Gemini")
+      ? callGemini(cfg, opts)
+      : callNebius(cfg, opts);
+}
+
+/**
+ * Wrapper used by `normalizeAddress` (the map-side pre-parser). This is
+ * STRICTLY scoped to the **map chain** — `MAP_CHAT_KEY` (Gemini-flash)
+ * first, `CEREBRAS_API_KEY` (gpt-oss-120b, OpenAI-compat fast inference)
+ * as a fallback. It deliberately never falls through to the chat chain's
+ * `callLLM` pipeline — the chat runs on a separate Gemini key and a
+ * single noisy CSV import must not starve the conversational assistant.
+ *
+ * Behavior:
+ *   1. If `MAP_CHAT_KEY` is configured, call the Gemini transport with
+ *      that key. On a RECOVERABLE error (429 / 503 / network / timeout)
+ *      fall through to the Cerebras backup. On NON-RECOVERABLE (401 /
+ *      403 / 400) abort — switching provider won't fix an auth or
+ *      malformed-input problem.
+ *   2. If MapChat is unconfigured, skip directly to Cerebras.
+ *   3. If neither key is configured, return a clear "add MAP_CHAT_KEY /
+ *      CEREBRAS_API_KEY" hint. The row still goes through the
+ *      deterministic cascade.
+ *   4. If BOTH providers are exhausted, return the last error verbatim
+ *      with its label so the caller can surface "MapChat · offline" or
+ *      "Cerebras · offline" in the map progress chip.
+ */
 async function callAddressNormalizer(opts: {
   system: string;
   user: string;
   maxOutputTokens?: number;
   temperature?: number;
 }): Promise<LLMResult> {
-  const mapCfg = buildMapChatConfig();
-  if (!mapCfg) {
+  const chain = [
+    buildMapChatConfig(),
+    buildMapCerebrasConfig(),
+  ].filter((c): c is ProviderConfig => !!c);
+  if (chain.length === 0) {
     return {
       error:
-        "MapChat AI offline — add MAP_CHAT_KEY in the project's Keys/API keys tab to enable AI address normalization.",
+        "MapChat AI offline — add MAP_CHAT_KEY (or CEREBRAS_API_KEY as a backup) in the project's Keys/API keys tab to enable AI address normalization.",
     };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    const result = await callGemini(mapCfg, {
-      system: opts.system,
-      user: opts.user,
-      signal: controller.signal,
-      temperature: opts.temperature,
-      maxOutputTokens: opts.maxOutputTokens,
-    });
-    if (!result.error) {
-      return { ...result, providerLabel: mapCfg.label };
+    let lastError: string | undefined;
+    for (const cfg of chain) {
+      const callOpts: CallOpts = {
+        system: opts.system,
+        user: opts.user,
+        signal: controller.signal,
+        temperature: opts.temperature,
+        maxOutputTokens: opts.maxOutputTokens,
+      };
+      const result = await callForMapCfg(cfg, callOpts);
+      if (!result.error) {
+        return { ...result, providerLabel: cfg.label };
+      }
+      const e = result.error;
+      const nonRecoverable =
+        /was rejected by/.test(e) ||
+        /wasn't 2 letters|wasn't 5 digits|returned 4\d\d|returned 400\b/i.test(
+          e,
+        );
+      lastError = e;
+      console.warn(
+        `[mapNormalizer] ${cfg.label} failed (${nonRecoverable ? "non-recoverable" : "recoverable"}${chain.length > 1 ? ", trying next map provider" : ", NOT touching the chat Gemini key"}): ${e}`,
+      );
+      if (nonRecoverable) break;
+      // else: try the next map provider (Cerebras backup)
     }
-    // Any error (recoverable OR non-recoverable) is returned directly.
-    // We intentionally never fall through to callLLM here — the chat
-    // Gemini key is reserved for the conversational assistant.
-    console.warn(
-      `[mapNormalizer] MapChat failed (returning ok=false to caller, NOT touching the chat Gemini key): ${result.error}`,
-    );
-    return result;
+    return { error: lastError ?? "Atlas Assistant is offline." };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/**
+ * Map-side Cerebras transport. Same OpenAI-compat shape as Nebius, just
+ * a different base URL + model. Returns `{content?, error?, providerLabel?}`.
+ */
+async function callCerebras(
+  cfg: ProviderConfig,
+  opts: CallOpts,
+): Promise<LLMResult> {
+  const url = `${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.apiKey!}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        temperature: opts.temperature ?? 0.1,
+        max_tokens: opts.maxOutputTokens ?? 1500,
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+      }),
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(
+        `[chatComplete] ${cfg.label} ${res.status}: ${detail.slice(0, 300)}`,
+      );
+      const isAuth = res.status === 401 || res.status === 403;
+      const isRateLimit = res.status === 429 || res.status === 503;
+      if (isAuth) {
+        return {
+          error: `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`,
+        };
+      }
+      if (isRateLimit) {
+        return {
+          error: `Atlas Assistant is offline — ${rateLimitHint(res, "Cerebras")}`,
+        };
+      }
+      return {
+        error: `Atlas Assistant is offline — upstream returned ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data?.choices?.[0]?.message?.content ?? "";
+    return { content: String(content).trim() };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[chatComplete] cerebras error", msg);
+    if (msg.includes("abort")) {
+      return { error: "Atlas Assistant timed out. Try a sharper question." };
+    }
+    return {
+      error: "Atlas Assistant is offline — couldn't reach the model.",
+    };
   }
 }
 
@@ -541,10 +703,24 @@ export async function providerStatus(): Promise<{
     model: string;
   };
   mapKeyEnvVars: string[];
+  /**
+   * Map-side Cerebras backup (`gpt-oss-120b`, OpenAI-compat fast
+   * inference). Wired in after MapChat started rate-limiting on
+   * free-tier Gemini. Surfaced here so the user can confirm the key
+   * is actually visible to the Convex runtime.
+   */
+  cerebrasKey: {
+    configured: boolean;
+    activeEnvName: string | null;
+    label: string;
+    model: string;
+  };
+  cerebrasKeyEnvVars: string[];
 }> {
   const chain = resolveProviders();
   const primary = resolvePrimaryProvider();
   const mapCfg = buildMapChatConfig();
+  const cerebrasCfg = buildMapCerebrasConfig();
   return {
     chain: chain.map(({ name, cfg }) => ({
       name,
@@ -576,6 +752,20 @@ export async function providerStatus(): Promise<{
           model: process.env.MAP_CHAT_MODEL ?? "gemini-flash-latest",
         },
     mapKeyEnvVars: [...MAP_KEY_ENV_NAMES],
+    cerebrasKey: cerebrasCfg
+      ? {
+          configured: true,
+          activeEnvName: cerebrasCfg.keyEnv,
+          label: cerebrasCfg.label,
+          model: cerebrasCfg.model,
+        }
+      : {
+          configured: false,
+          activeEnvName: null,
+          label: "Cerebras · gpt-oss-120b",
+          model: process.env.CEREBRAS_MODEL ?? "gpt-oss-120b",
+        },
+    cerebrasKeyEnvVars: [...CEREBRAS_KEY_ENV_NAMES],
   };
 }
 
