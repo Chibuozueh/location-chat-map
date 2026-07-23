@@ -91,6 +91,28 @@ function readGeminiKey(): { key: string | null; envName: string | null } {
   return { key: null, envName: null };
 }
 
+/**
+ * Accepted env-var names for the **map / address-normalization** key.
+ * This is the dedicated key the user added in the Keys/API keys tab for
+ * the geocoding pre-parser — it has its own quota and is intentionally
+ * isolated from the chat's Gemini key so a noisy CSV upload can't
+ * starve the conversational assistant.
+ */
+const MAP_KEY_ENV_NAMES = [
+  "MAP_CHAT_KEY",
+  "MAPCHAT_KEY",
+  "MAP_CHAT_API_KEY",
+  "MAP_API_KEY",
+] as const;
+
+function readMapKey(): { key: string | null; envName: string | null } {
+  for (const name of MAP_KEY_ENV_NAMES) {
+    const v = process.env[name];
+    if (v && v.trim().length > 0) return { key: v.trim(), envName: name };
+  }
+  return { key: null, envName: null };
+}
+
 /** Per-provider config snapshot returned to callers. */
 export type ResolvedProvider = {
   name: ProviderName;
@@ -335,8 +357,7 @@ async function callNebius(
  *
  * Returns `{content?, error?, providerLabel?}` — `providerLabel` is the
  * label of whichever provider actually answered (or was attempted last).
- */
-async function callLLM(opts: {
+ */async function callLLM(opts: {
   system: string;
   user: string;
   /** Optional override for chat actions; default 1500 tokens is fine for
@@ -399,6 +420,94 @@ async function callLLM(opts: {
   }
 }
 
+/**
+ * Build a ProviderConfig snapshot for the dedicated map / address-normalization
+ * key. Returns null when no map key is configured (caller falls through to the
+ * chat chain). We use the **same Gemini transport as the chat's Gemini
+ * provider** because `MAP_CHAT_KEY` is almost certainly a Gemini key with its
+ * own quota — keep the wire format identical so a future switch to a
+ * different provider is a localized change.
+ *
+ * Per-key knobs (overridable via env):
+ *   - MAP_CHAT_MODEL        (default: gemini-flash-latest)
+ *   - MAP_CHAT_BASE_URL     (default: https://generativelanguage.googleapis.com/v1beta/models)
+ */
+function buildMapChatConfig(): ProviderConfig | null {
+  const { key, envName } = readMapKey();
+  if (!key) return null;
+  return {
+    apiKey: key,
+    model: process.env.MAP_CHAT_MODEL ?? "gemini-flash-latest",
+    baseUrl: process.env.MAP_CHAT_BASE_URL ?? GEMINI_DEFAULT_BASE,
+    label: "MapChat · gemini-flash-latest",
+    keyEnv: envName ?? "MAP_CHAT_KEY",
+  };
+}
+
+/**
+ * Wrapper used by `normalizeAddress` (the map-side pre-parser). The flow:
+ *
+ *   1. If `MAP_CHAT_KEY` (or any of the MAP_KEY_ENV_NAMES aliases) is set,
+ *      call the Gemini transport with that key. The dedicated quota
+ *      protects the conversational chat from being starved by a noisy CSV
+ *      upload.
+ *   2. On a RECOVERABLE upstream error from the map key (429 / 503 /
+ *      network / abort), fall through to `callLLM` (the chat's
+ *      gemini-first chain) so a single busted key can't lock the
+ *      geocoder.
+ *   3. On a NON-RECOVERABLE error (401 / 403 / 400), stop immediately —
+ *      switching providers won't fix an auth or bad-input problem, and
+ *      this key is dedicated, so the chat chain isn't a meaningful
+ *      fallback anyway.
+ *
+ * When no map key is configured at all, behaves exactly like `callLLM`.
+ */
+async function callAddressNormalizer(opts: {
+  system: string;
+  user: string;
+  maxOutputTokens?: number;
+  temperature?: number;
+}): Promise<LLMResult> {
+  const mapCfg = buildMapChatConfig();
+  if (mapCfg) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    try {
+      const result = await callGemini(mapCfg, {
+        system: opts.system,
+        user: opts.user,
+        signal: controller.signal,
+        temperature: opts.temperature,
+        maxOutputTokens: opts.maxOutputTokens,
+      });
+      if (!result.error) {
+        return { ...result, providerLabel: mapCfg.label };
+      }
+      const e = result.error;
+      const nonRecoverable =
+        /was rejected by/.test(e) ||
+        /wasn't 2 letters|wasn't 5 digits|returned 4\d\d|returned 400\b/i.test(
+          e,
+        );
+      console.warn(
+        `[mapNormalizer] MapChat failed (${nonRecoverable ? "non-recoverable" : "recoverable"}): ${e}`,
+      );
+      if (nonRecoverable) {
+        // Don't burn the chat chain on something a different key can't fix.
+        return result;
+      }
+      // else: recoverable — fall through to the chat chain.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  // No map key set, OR map key failed recoverably — use the chat chain
+  // (gemini → nebius). Note: this is the SAME chain that powers the
+  // chat narrative, so on a fresh install with only `GEMINI_API_KEY` set
+  // the normalizer degrades to "the chat's Gemini key is shared".
+  return await callLLM(opts);
+}
+
 /** Read-only helper used elsewhere if we want to surface the provider label
  *  in the UI. Returns null when no key is set. */
 export async function activeProviderLabel(): Promise<string | null> {
@@ -424,9 +533,22 @@ export async function providerStatus(): Promise<{
     activeEnvName: string | null;
   } | null;
   triedEnvVars: string[];
+  /**
+   * Dedicated map / address-normalization key. Lives outside the chat
+   * chain so the user can see at a glance whether the geocode pre-parser
+   * has its own quota or is silently borrowing the chat's Gemini key.
+   */
+  mapKey: {
+    configured: boolean;
+    activeEnvName: string | null;
+    label: string;
+    model: string;
+  };
+  mapKeyEnvVars: string[];
 }> {
   const chain = resolveProviders();
   const primary = resolvePrimaryProvider();
+  const mapCfg = buildMapChatConfig();
   return {
     chain: chain.map(({ name, cfg }) => ({
       name,
@@ -444,6 +566,20 @@ export async function providerStatus(): Promise<{
         }
       : null,
     triedEnvVars: [...GEMINI_KEY_ENV_NAMES],
+    mapKey: mapCfg
+      ? {
+          configured: true,
+          activeEnvName: mapCfg.keyEnv,
+          label: mapCfg.label,
+          model: mapCfg.model,
+        }
+      : {
+          configured: false,
+          activeEnvName: null,
+          label: "MapChat · gemini-flash-latest",
+          model: process.env.MAP_CHAT_MODEL ?? "gemini-flash-latest",
+        },
+    mapKeyEnvVars: [...MAP_KEY_ENV_NAMES],
   };
 }
 
@@ -594,7 +730,7 @@ export const normalizeAddress = action({
       .filter(Boolean)
       .join("\n");
 
-    const res = await callLLM({
+    const res = await callAddressNormalizer({
       system: NORMALIZER_SYSTEM_PROMPT,
       user,
       maxOutputTokens: 800,
