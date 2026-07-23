@@ -206,7 +206,7 @@
   background: #f3efe9;
 }
 .leaflet-tile {
-  filter: saturate(0.7) contrast(1.05) hue-rotate(-6deg);
+  filter: saturate(1.05) contrast(1.28) brightness(0.96);
 }
 .leaflet-control-attribution {
   background: #faf7f2ed;
@@ -274,10 +274,10 @@
   left: 50%;
   transform: translateX(-50%);
   font-size: 10.5px;
-  font-weight: 600;
-  color: #0e0a0b;
+  font-weight: 700;
+  color: #6e0e1e;
   background: #faf7f2eb;
-  border: 1px solid #e6dfd4;
+  border: 1px solid #6e0e1e4d;
   border-radius: 6px;
   padding: 2px 6px;
   line-height: 1.12;
