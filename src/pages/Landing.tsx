@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { LayoutGrid, Map as MapIcon } from "lucide-react";
+import { LayoutGrid, Map as MapIcon, Minimize2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { AppHeader } from "@/components/atlas/AppHeader";
 import { AtlasHero } from "@/components/atlas/AtlasHero";
@@ -27,6 +27,9 @@ function LandingInner() {
   const [selected, setSelected] = useState<string | null>(null);
   const [pickerClusterKey, setPickerClusterKey] = useState<string | null>(null);
   const [view, setView] = useState<"map" | "sheet">("map");
+  /** When true, the chat aside collapses and the map fills the viewport
+   *  at ~60% larger perceived area (full width + taller height). */
+  const [mapFocus, setMapFocus] = useState(false);
   const exploreRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-seed once on first mount if the table is empty, OR if the existing
@@ -118,6 +121,36 @@ function LandingInner() {
     exploreRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  /** Toggle the focused-map mode and scroll the map into view. */
+  const handleExploreMap = useCallback(() => {
+    setMapFocus((prev) => {
+      const next = !prev;
+      // Scroll after the layout shift has been committed.
+      requestAnimationFrame(() => {
+        exploreRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+      return next;
+    });
+  }, []);
+
+  /** Jump to the curated sheet view and scroll it into view. */
+  const handleExploreAssets = useCallback(() => {
+    setView("sheet");
+    requestAnimationFrame(() => {
+      exploreRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
+
+  const handleCollapseMap = useCallback(() => {
+    setMapFocus(false);
+  }, []);
+
   const totalVisible = merged.mappable.length + merged.chatOnly.length;
 
   return (
@@ -134,19 +167,34 @@ function LandingInner() {
           openNow={top?.counts.openNow ?? 0}
           avgRating={top?.counts.avgRating ?? 0}
           cities={top?.cities ?? []}
-          onExplore={scrollToMap}
+          onExplore={handleExploreMap}
+          onExploreAssets={handleExploreAssets}
+          mapFocus={mapFocus}
         />
 
         <div
           ref={exploreRef}
-          className="mt-8 grid gap-4 md:mt-10 md:gap-6 lg:grid-cols-[1.5fr_1fr]"
+          className={`mt-8 grid gap-4 md:mt-10 md:gap-6 transition-[grid-template-columns] duration-300 ${
+            mapFocus
+              ? "grid-cols-1"
+              : "lg:grid-cols-[1.5fr_1fr]"
+          }`}
         >
           {/* Left: view toggle + Map/Sheet */}
-          <section className="flex min-h-[560px] flex-col">
+          <section
+            className={`flex flex-col transition-[min-height] duration-300 ${
+              mapFocus
+                ? "min-h-[calc(100vh-7rem)]"
+                : "min-h-[560px]"
+            }`}
+          >
             <div className="mb-3 flex items-center gap-2">
               <div className="inline-flex items-center rounded-full border border-border/60 bg-card p-1 text-[11px] shadow-card">
                 <button
-                  onClick={() => setView("map")}
+                  onClick={() => {
+                    setView("map");
+                    if (mapFocus) setMapFocus(false);
+                  }}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition ${
                     view === "map"
                       ? "bg-primary text-primary-foreground"
@@ -157,7 +205,10 @@ function LandingInner() {
                   Map
                 </button>
                 <button
-                  onClick={() => setView("sheet")}
+                  onClick={() => {
+                    setView("sheet");
+                    if (mapFocus) setMapFocus(false);
+                  }}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition ${
                     view === "sheet"
                       ? "bg-primary text-primary-foreground"
@@ -175,39 +226,55 @@ function LandingInner() {
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
                 Live data
               </div>
+              {mapFocus && (
+                <button
+                  type="button"
+                  onClick={handleCollapseMap}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card/90 px-3 py-1.5 text-[11px] font-medium text-foreground shadow-card backdrop-blur transition hover:border-accent/60"
+                  aria-label="Collapse map back to overview"
+                >
+                  <Minimize2 className="h-3 w-3 text-accent" />
+                  Collapse
+                </button>
+              )}
             </div>
 
-            {view === "map" ? (
-              <MapView
-                clusters={clusters}
-                selectedSlug={selected}
-                pickerClusterKey={pickerClusterKey}
-                onSelect={handleSelectSlug}
-                onOpenPicker={handleOpenPicker}
-                onClosePicker={handleClosePicker}
-              />
-            ) : (
-              <LocationGrid
-                locations={[...merged.mappable, ...merged.chatOnly] as LocationDoc[]}
-                selectedSlug={selected}
-                onSelect={handleSelectSlug}
-                clusterSizes={((): Record<string, number> => {
-                  const out: Record<string, number> = {};
-                  for (const c of clusters) {
-                    if (c.count > 1) {
-                      for (const m of c.members) out[m.slug] = c.count;
+            <div className="relative flex-1">
+              {view === "map" ? (
+                <MapView
+                  clusters={clusters}
+                  selectedSlug={selected}
+                  pickerClusterKey={pickerClusterKey}
+                  onSelect={handleSelectSlug}
+                  onOpenPicker={handleOpenPicker}
+                  onClosePicker={handleClosePicker}
+                />
+              ) : (
+                <LocationGrid
+                  locations={[...merged.mappable, ...merged.chatOnly] as LocationDoc[]}
+                  selectedSlug={selected}
+                  onSelect={handleSelectSlug}
+                  clusterSizes={((): Record<string, number> => {
+                    const out: Record<string, number> = {};
+                    for (const c of clusters) {
+                      if (c.count > 1) {
+                        for (const m of c.members) out[m.slug] = c.count;
+                      }
                     }
-                  }
-                  return out;
-                })()}
-              />
-            )}
+                    return out;
+                  })()}
+                />
+              )}
+            </div>
           </section>
 
-          {/* Right: chat panel */}
-          <aside className="flex min-h-[560px] flex-col">
-            <ChatPanel onCitation={(slug) => setSelected(slug)} />
-          </aside>
+          {/* Right: chat panel — collapses out of view when the user
+              requests the focused-map mode so the map can fill the row. */}
+          {!mapFocus && (
+            <aside className="flex min-h-[560px] flex-col">
+              <ChatPanel onCitation={(slug) => setSelected(slug)} />
+            </aside>
+          )}
         </div>
 
         {/* Detail drawer */}

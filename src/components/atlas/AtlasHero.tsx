@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowRight, MapPlus, Sparkles } from "lucide-react";
-import { Link } from "react-router";
+import { ArrowRight, LayoutGrid, Minimize2, Sparkles } from "lucide-react";
 
 export function AtlasHero(props: {
   total: number;
@@ -8,9 +7,22 @@ export function AtlasHero(props: {
   openNow: number;
   avgRating: number;
   cities: string[];
+  /** Toggles the focused-map mode (also scrolls the map into view). */
   onExplore: () => void;
+  /** Switches the right-hand pane to the curated sheet view. */
+  onExploreAssets: () => void;
+  /** Whether the focused-map mode is currently active. */
+  mapFocus: boolean;
 }) {
-  const { total, uploadedCount, openNow, avgRating, cities, onExplore } = props;
+  const {
+    uploadedCount,
+    openNow,
+    avgRating,
+    cities,
+    onExplore,
+    onExploreAssets,
+    mapFocus,
+  } = props;
   return (
     <div className="relative overflow-hidden rounded-3xl border border-border/60 bg-card shadow-card">
       <div className="absolute inset-0 gradient-paper" aria-hidden />
@@ -57,18 +69,29 @@ export function AtlasHero(props: {
           >
             <button
               onClick={onExplore}
+              aria-pressed={mapFocus}
               className="group inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground shadow-pop transition hover:bg-primary/95"
             >
-              Explore the map
-              <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              {mapFocus ? (
+                <>
+                  Collapse map
+                  <Minimize2 className="h-3.5 w-3.5 transition-transform group-hover:scale-90" />
+                </>
+              ) : (
+                <>
+                  Explore the map
+                  <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                </>
+              )}
             </button>
-            <Link
-              to="/auth"
+            <button
+              type="button"
+              onClick={onExploreAssets}
               className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/70 px-4 py-2 text-[13px] font-medium text-foreground backdrop-blur transition hover:border-accent/60"
             >
-              <MapPlus className="h-3.5 w-3.5 text-accent" />
-              Sign in to save routes
-            </Link>
+              <LayoutGrid className="h-3.5 w-3.5 text-accent" />
+              Explore the assets
+            </button>
           </motion.div>
         </div>
         <motion.div
