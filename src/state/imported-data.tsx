@@ -41,6 +41,17 @@ export type GeocodeProgress = {
   geminiSkipped: number;
   /** Rows where the Gemini call itself errored (transient). */
   geminiError: number;
+  /** Number of times we've actually hit the MapChat `normalizeAddress`
+   *  action (whether the result was a clean, skip, or error). Surfaced in
+   *  the UI so the user can see the API is being called and how many
+   *  calls have happened so far in this pass. */
+  geminiCallsMade: number;
+  /** Whichever provider answered the last successful MapChat call. Surfaced
+   *  in the chip so the user can tell at a glance which key powered the
+   *  normalizer ("MapChat · gemini-flash-latest" when MAP_CHAT_KEY is
+   *  set, "Gemini · gemini-flash-latest" when only the chat chain is
+   *  available, etc.). */
+  mapProviderLabel: string | null;
   failed: number;
   active: boolean;
 };
@@ -83,6 +94,8 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   geminiCleaned: 0,
   geminiSkipped: 0,
   geminiError: 0,
+  geminiCallsMade: 0,
+  mapProviderLabel: null,
   failed: 0,
   active: false,
 };
@@ -145,8 +158,11 @@ const ImportedContext = createContext<ImportedContextValue | null>(null);
 const NOMINATIM_SPACING_MS = 1100;
 
 // Gemini / Nebius rate-limit safety for Tier-5 address normalization.
-// Stay well under common free-tier per-minute caps (e.g. Gemini 15 RPM).
-const LLM_NORMALIZE_SPACING_MS = 8_000;
+// 4 s between calls keeps the user-visible call counter ticking at a useful
+// rate and still stays well under common free-tier per-minute caps
+// (Gemini flash: 15 RPM → 1 call / 4 s). Override via localStorage key
+// `atlas.llmSpacingMs` if a quota bump is needed later.
+const DEFAULT_LLM_NORMALIZE_SPACING_MS = 4_000;
 
 export function ImportedDataProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ImportedState>(EMPTY);
@@ -275,6 +291,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           geminiCleaned: 0,
           geminiSkipped: 0,
           geminiError: 0,
+          geminiCallsMade: 0,
+          mapProviderLabel: null,
           failed: 0,
           active: pendingCount > 0,
         },
@@ -591,6 +609,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         let source: "cached" | "fetched" | "gemini-fixup" | null = null;
         let llmOutcome: "cleaned" | "skipped" | "errored" | null = null;
         let geminiAttempted = false;
+        // Whichever provider answered this row's MapChat call. Stays null
+        // until `geminiAttempted` is true.
+        let lastProviderLabel: string | null = null;
 
         // Step 1: coord-cache hit on raw address → instant place.
         if (key && coordCacheRef.current.has(key)) {
@@ -628,6 +649,18 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             llmOutcome = "skipped";
           } else {
             geminiAttempted = true;
+            // Log the outgoing call so the user can verify in DevTools
+            // that the action is firing, and which row is on the wire.
+            // Counter surfacing in the chat panel header is the
+            // visible companion to this log; the console line is the
+            // forensic check.
+            console.info(
+              `[atlas/llm-normalize] calling MapChat for "${doc.name}" (#${
+                i + 1
+              }/${state.pending.length}); raw street = "${rawStreet}", zip = "${
+                doc.postalCode ?? ""
+              }"`,
+            );
             try {
               const clean = await normalizeAddress({
                 rawStreet,
@@ -639,6 +672,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 knownState: "GA",
                 knownCountry: "USA",
               });
+              console.info(
+                `[atlas/llm-normalize] MapChat returned for "${doc.name}":`,
+                {
+                  ok: !!clean.ok,
+                  provider: clean.providerLabel ?? null,
+                  street: clean.street ?? null,
+                  city: clean.city ?? null,
+                  state: clean.state ?? null,
+                  postalcode: clean.postalcode ?? null,
+                  confidence: clean.confidence ?? null,
+                  error: clean.error ?? null,
+                },
+              );
               if (clean.ok && clean.street) {
                 cleaned = {
                   ok: true,
@@ -649,6 +695,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 };
                 normalizeCacheRef.current.set(cleanCacheKey, cleaned);
                 llmOutcome = "cleaned";
+                if (clean.providerLabel) lastProviderLabel = clean.providerLabel;
               } else if (
                 clean.error &&
                 /offline|timeout|not set|rejected|unparseable|returned|5\d\d|4\d\d/i.test(
@@ -775,6 +822,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
               geminiError:
                 prev.progress.geminiError +
                 (llmOutcome === "errored" ? 1 : 0),
+              geminiCallsMade:
+                prev.progress.geminiCallsMade + (geminiAttempted ? 1 : 0),
+              mapProviderLabel:
+                geminiAttempted && lastProviderLabel
+                  ? lastProviderLabel
+                  : prev.progress.mapProviderLabel,
               active: remainingPending.length > 0,
             },
           };
@@ -789,7 +842,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // Slow the Gemini call cadence to stay well below common free-tier
         // per-minute caps when parsing every row.
         if (geminiAttempted) {
-          await new Promise((r) => setTimeout(r, LLM_NORMALIZE_SPACING_MS));
+          await new Promise((r) =>
+            setTimeout(r, DEFAULT_LLM_NORMALIZE_SPACING_MS),
+          );
         }
       }
 

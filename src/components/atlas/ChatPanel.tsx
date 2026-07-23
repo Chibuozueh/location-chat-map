@@ -648,6 +648,30 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                     {importedState.progress.geminiCleaned} gemini-cleaned
                   </span>
                 )}
+                {/* Live MapChat call counter. Visible from the first row the
+                    AI touches so the user can verify the action is firing
+                    without waiting for the loop to finish. Tied to
+                    `console.info("[atlas/llm-normalize] calling MapChat
+                    …")` in imported-data.tsx so the same info shows up in
+                    DevTools. */}
+                {importedState.progress.geminiCallsMade > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
+                    title={
+                      importedState.progress.mapProviderLabel
+                        ? `Actual outbound calls to ${importedState.progress.mapProviderLabel}. Detailed log in DevTools (filter: [atlas/llm-normalize]).`
+                        : `Detailed log in DevTools (filter: [atlas/llm-normalize]).`
+                    }
+                  >
+                    <span aria-hidden className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#6e0e1e]" />
+                    {importedState.progress.geminiCallsMade} MapChat call{importedState.progress.geminiCallsMade === 1 ? "" : "s"}
+                    {importedState.progress.mapProviderLabel ? (
+                      <span className="ml-0.5 font-normal normal-case tracking-normal text-[#6e0e1e]/80">
+                        · {importedState.progress.mapProviderLabel}
+                      </span>
+                    ) : null}
+                  </span>
+                )}
                 {importedState.progress.geminiError > 0 && (
                   <span className="text-foreground/70">
                     · {importedState.progress.geminiError} gemini errors
