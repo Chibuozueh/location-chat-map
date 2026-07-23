@@ -206,7 +206,7 @@
   background: #f3efe9;
 }
 .leaflet-tile {
-  filter: saturate(1.05) contrast(1.28) brightness(0.96);
+  filter: contrast(1.22);
 }
 .leaflet-control-attribution {
   background: #faf7f2ed;
