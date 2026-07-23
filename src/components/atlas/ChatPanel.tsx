@@ -603,6 +603,20 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                     · {importedState.progress.zipCentroid} zip-centroid
                   </span>
                 )}
+                {importedState.progress.geminiCleaned > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
+                    title="Rows that the assistant cleanly re-formatted and the geocoder then accepted."
+                  >
+                    <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-[#6e0e1e]" />
+                    {importedState.progress.geminiCleaned} gemini-cleaned
+                  </span>
+                )}
+                {importedState.progress.geminiError > 0 && (
+                  <span className="text-foreground/70">
+                    · {importedState.progress.geminiError} gemini errors
+                  </span>
+                )}
                 {importedState.progress.failed > 0 && (
                   <>
                     <span className="text-foreground/70">

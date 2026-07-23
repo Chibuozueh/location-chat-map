@@ -33,6 +33,12 @@ export type GeocodeProgress = {
   relaxed: number;
   /** Zip centroid (Atlanta table or Zippopotam.us fallback). */
   zipCentroid: number;
+  /** Rows that the Gemini-normalize + re-run cascade recovered. */
+  geminiCleaned: number;
+  /** Rows Gemini returned ok=false for (no fabrication, gave up). */
+  geminiSkipped: number;
+  /** Rows where the Gemini call itself errored (transient). */
+  geminiError: number;
   failed: number;
   active: boolean;
 };
@@ -60,6 +66,9 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   exact: 0,
   relaxed: 0,
   zipCentroid: 0,
+  geminiCleaned: 0,
+  geminiSkipped: 0,
+  geminiError: 0,
   failed: 0,
   active: false,
 };
@@ -93,14 +102,38 @@ const ImportedContext = createContext<ImportedContextValue | null>(null);
 // won't trigger the spacing sleep.
 const NOMINATIM_SPACING_MS = 1100;
 
+// Gemini / Nebius rate-limit safety for Tier-5 address normalization.
+// Stay well under common free-tier per-minute caps (e.g. Gemini 15 RPM).
+const LLM_NORMALIZE_SPACING_MS = 8_000;
+
 export function ImportedDataProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ImportedState>(EMPTY);
   const [importing, setImporting] = useState(false);
   const geocode = useAction(api.geocode.geocodeAddress);
+  // Tier-5: the AI-assisted address normalizer. Gracefully returns
+  // ok=false when no API key is set so this degrades into "no behavior
+  // change" on a fresh install.
+  const normalizeAddress = useAction(api.chatComplete.normalizeAddress);
 
   // Cache by normalized address key so repeated rows are instant.
   const coordCacheRef = useRef<
     Map<string, { lat: number; lng: number; accuracy: CoordAccuracy }>
+  >(new Map());
+
+  // Cache successful Gemini normalizations keyed by rawStreet + geoKey so
+  // re-imports / Retry don't double-charge the model.
+  const normalizeCacheRef = useRef<
+    Map<
+      string,
+      | {
+          ok: true;
+          street: string;
+          city?: string;
+          state?: string;
+          postalcode?: string;
+        }
+      | { ok: false }
+    >
   >(new Map());
 
   // Cancellation flag so an external `clear()` aborts the loop cleanly.
@@ -147,6 +180,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           exact: 0,
           relaxed: 0,
           zipCentroid: 0,
+          geminiCleaned: 0,
+          geminiSkipped: 0,
+          geminiError: 0,
           failed: 0,
           active: pendingCount > 0,
         },
@@ -182,6 +218,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       return EMPTY;
     });
     coordCacheRef.current.clear();
+    normalizeCacheRef.current.clear();
   }, []);
 
   // Re-run the cascade on every previously-failed row. We move the failed
@@ -208,6 +245,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           ...prev.progress,
           total: prev.progress.total + prev.failed.length,
           failed: 0,
+          geminiSkipped: 0,
+          geminiError: 0,
           active: true,
         },
       };
@@ -217,6 +256,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // Geocode loop. Runs whenever a brand-new upload lands (signaled by
   // importedAt) OR the user fires a Retry (signaled by retryNonce).
   // Uses the multi-tier cascade returned by the action.
+  // Tier 5 (Gemini-normalize then re-run) activates only when:
+  //   1. Tier 1-4 returned nothing.
+  //   2. We have a raw street line worth cleaning.
+  //   3. The LLM hasn't already given up on this address before.
+  //   4. There's enough budget headroom (rate-limit spacing).
   useEffect(() => {
     if (!state.pending.length) return;
     if (!state.progress.active) return;
@@ -228,10 +272,14 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         const item = state.pending[i];
         const doc = item.doc;
         const key = doc.geoKey || "";
+        const rawStreet = (doc.address ?? "").trim();
 
         let coord: { lat: number; lng: number } | null = null;
         let accuracy: CoordAccuracy | null = null;
-        let source: "cached" | "fetched" | "zippo" | null = null;
+        let source: "cached" | "fetched" | "zippo" | "gemini-fixup" | null =
+          null;
+        let llmOutcome: "cleaned" | "skipped" | "errored" | null = null;
+        let cleanCacheKey: string | null = null;
 
         if (key && coordCacheRef.current.has(key)) {
           const cached = coordCacheRef.current.get(key)!;
@@ -261,6 +309,90 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             }
           } catch (err) {
             console.warn("[geocode] action threw", err);
+          }
+        }
+
+        // Tier 5: LLM-assisted address normalization. We only attempt if
+        // Tier 1-4 returned nothing AND we have a meaningful street line
+        // (skip the call for rows whose only failure was a missing ZIP).
+        if (!coord && rawStreet.length > 0 && key) {
+          cleanCacheKey = `clean:${key}`;
+          const cached = normalizeCacheRef.current.get(cleanCacheKey);
+          if (cached && cached.ok) {
+            // Cache hit — skip the model call and re-run the cascade
+            // with the previously-cleaned values.
+            const r5 = await geocode({
+              street: cached.street,
+              city: cached.city,
+              state: cached.state,
+              postalcode: cached.postalcode,
+              country: doc.country || "USA",
+            });
+            if (r5) {
+              coord = { lat: r5.lat, lng: r5.lng };
+              accuracy = "gemini-fixup";
+              source = "gemini-fixup";
+              llmOutcome = "cleaned";
+              coordCacheRef.current.set(key, {
+                lat: r5.lat,
+                lng: r5.lng,
+                accuracy: "gemini-fixup",
+              });
+            }
+          } else if (!cached) {
+            // Cache miss — call Gemini.
+            try {
+              const clean = await normalizeAddress({
+                rawStreet,
+                rawCity: doc.city,
+                rawState: doc.state,
+                rawPostalCode: doc.postalCode,
+                assetName: doc.name,
+              });
+              if (clean.ok) {
+                normalizeCacheRef.current.set(cleanCacheKey, {
+                  ok: true,
+                  street: clean.street ?? "",
+                  city: clean.city,
+                  state: clean.state,
+                  postalcode: clean.postalcode,
+                });
+                const r5 = await geocode({
+                  street: clean.street ?? rawStreet,
+                  city: clean.city,
+                  state: clean.state,
+                  postalcode: clean.postalcode,
+                  country: doc.country || "USA",
+                });
+                if (r5) {
+                  coord = { lat: r5.lat, lng: r5.lng };
+                  accuracy = "gemini-fixup";
+                  source = "gemini-fixup";
+                  llmOutcome = "cleaned";
+                  coordCacheRef.current.set(key, {
+                    lat: r5.lat,
+                    lng: r5.lng,
+                    accuracy: "gemini-fixup",
+                  });
+                } else {
+                  llmOutcome = "cleaned"; // Gemini succeeded as cleanup but the rerun still failed geocode.
+                }
+              } else if (
+                clean.error &&
+                /offline|timeout|not set|rejected|unparseable|returned|5\d\d|4\d\d/i.test(
+                  clean.error,
+                )
+              ) {
+                llmOutcome = "errored";
+                normalizeCacheRef.current.set(cleanCacheKey, { ok: false });
+              } else {
+                llmOutcome = "skipped";
+                normalizeCacheRef.current.set(cleanCacheKey, { ok: false });
+              }
+            } catch (err) {
+              console.warn("[llm-normalize] threw", err);
+              llmOutcome = "errored";
+            }
           }
         }
 
@@ -315,6 +447,15 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 (source === "fetched" && accuracy === "zip-centroid"
                   ? 1
                   : 0),
+              geminiCleaned:
+                prev.progress.geminiCleaned +
+                (llmOutcome === "cleaned" && coord ? 1 : 0),
+              geminiSkipped:
+                prev.progress.geminiSkipped +
+                (llmOutcome === "skipped" ? 1 : 0),
+              geminiError:
+                prev.progress.geminiError +
+                (llmOutcome === "errored" ? 1 : 0),
               failed: !coord ? prev.progress.failed + 1 : prev.progress.failed,
               active: done < prev.progress.total,
             },
@@ -326,6 +467,14 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // table (instant hits).
         if (source === "fetched") {
           await new Promise((r) => setTimeout(r, NOMINATIM_SPACING_MS));
+        }
+        // Rate-limit the LLM not-too-bursty. Slower than Nominatim on
+        // purpose to stay well below common Gemini free-tier RPM caps.
+        if (
+          (source === "gemini-fixup" || llmOutcome === "skipped" || llmOutcome === "errored") &&
+          rawStreet.length > 0
+        ) {
+          await new Promise((r) => setTimeout(r, LLM_NORMALIZE_SPACING_MS));
         }
       }
     };

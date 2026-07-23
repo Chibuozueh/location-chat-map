@@ -182,3 +182,167 @@ export const chatComplete = action({
     return await callLLM(args);
   },
 });
+
+// ---------------------------------------------------------------------------
+//  Address normalization — Tier-5 fallback when the deterministic geocode
+//  cascade fails. The model REFORMATS existing fields, never invents new
+//  ones. Caller hot-rejoins the cascade with the cleaned values.
+// ---------------------------------------------------------------------------
+
+const NORMALIZER_SYSTEM_PROMPT = `You are an address-normalization expert for Atlanta-metro community-asset spreadsheets.
+
+# Goal
+Reformat, reorder, and de-dup the components of a messy US street address so it can be re-passed to a geocoder.
+
+# What you may do
+- Strip leading business names ("Joe's Place")
+- Move trailing unit/suite tokens to a dedicated field
+- Standardize city names ("ATL" → "Atlanta", "Stn Mountain" → "Stone Mountain")
+- Spell out street suffixes ("St" → "Street", "Hwy" → "Highway")
+- Spell out state directionals ("S" → "South", "NW" → "Northwest")
+- Reformat ZIP+4 → ZIP-only when needed
+- Capitalize words properly ("peachtree st ne" → "Peachtree St NE")
+
+# What you MUST NOT do
+- **NEVER invent a street number, ZIP, or city** that wasn't originally in the input.
+- If the input is too ambiguous to normalize (e.g. just "Atlanta area", or a relative phrase like "across from MARTA Bankhead"), output confidence "low" and leave fields blank.
+- If the input has a ZIP and a city that disagree, keep them as supplied — do NOT pick one arbitrarily.
+
+# Output format (strict JSON, no markdown fences, no prose)
+{
+  "street": "<cleaned street line, no city/state/zip>",
+  "city": "<cleaned city name, or empty>",
+  "state": "<two-letter state code, or empty>",
+  "postalcode": "<5-digit ZIP, or empty>",
+  "confidence": "high" | "medium" | "low"
+}`;
+
+type NormalizeResult = {
+  ok: boolean;
+  street?: string;
+  city?: string;
+  state?: string;
+  postalcode?: string;
+  confidence?: "high" | "medium" | "low";
+  error?: string;
+  providerLabel?: string;
+};
+
+/** Pull a JSON object from raw LLM output. Tolerant of ```json fences,
+ *  leading prose, and trailing commentary. */
+function extractJsonObject(raw: string): Record<string, unknown> | null {
+  if (!raw) return null;
+  // Strip markdown code fences if present.
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const text = (fenced ? fenced[1] : raw).trim();
+  // First attempt: parse the whole string as JSON.
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+  } catch {
+    /* fall through to brace scan */
+  }
+  // Brace scan: find first balanced { ... } block.
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        const candidate = text.slice(start, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === "object") {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          /* keep scanning */
+        }
+        start = -1;
+      }
+    }
+  }
+  return null;
+}
+
+/** Light sanity-check on a cleaned address field. We reject anything that
+ *  looks like the model invented a street number we didn't pass in, or
+ *  spelled the state wrong (must be exactly two letters). */
+function pickString(obj: Record<string, unknown>, key: string): string {
+  const v = obj[key];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+export const normalizeAddress = action({
+  args: {
+    rawStreet: v.string(),
+    rawCity: v.optional(v.string()),
+    rawState: v.optional(v.string()),
+    rawPostalCode: v.optional(v.string()),
+    assetName: v.optional(v.string()),
+  },
+  handler: async (_ctx, args): Promise<NormalizeResult> => {
+    const user = [
+      `Raw street: ${args.rawStreet || "(empty)"}`,
+      `Raw city: ${args.rawCity || "(empty)"}`,
+      `Raw state: ${args.rawState || "(empty)"}`,
+      `Raw ZIP: ${args.rawPostalCode || "(empty)"}`,
+      args.assetName ? `Hint (asset name): ${args.assetName}` : "",
+      "",
+      "Return ONLY the strict JSON object described in your system prompt.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const res = await callLLM({ question: user, context: NORMALIZER_SYSTEM_PROMPT });
+    if (res.error || !res.content) {
+      return { ok: false, error: res.error ?? "Atlas Assistant could not clean the address.", providerLabel: res.providerLabel };
+    }
+    const obj = extractJsonObject(res.content);
+    if (!obj) {
+      return { ok: false, error: "Atlas Assistant returned an unparseable address.", providerLabel: res.providerLabel };
+    }
+
+    const street = pickString(obj, "street");
+    const city = pickString(obj, "city");
+    const stateRaw = pickString(obj, "state");
+    const state = stateRaw ? stateRaw.toUpperCase().slice(0, 2) : "";
+    const postalcode = pickString(obj, "postalcode").slice(0, 5);
+    const confidenceRaw = (pickString(obj, "confidence") as
+      | "high"
+      | "medium"
+      | "low"
+      | "").toLowerCase();
+
+    // Sanity check: state must be 2 letters if present.
+    if (state && state.length !== 2) {
+      return { ok: false, error: "State field wasn't 2 letters.", providerLabel: res.providerLabel };
+    }
+    // Sanity check: postalcode if present must be 5 digits.
+    if (postalcode && !/^\d{5}$/.test(postalcode)) {
+      return { ok: false, error: "ZIP field wasn't 5 digits.", providerLabel: res.providerLabel };
+    }
+    // We only consider normalization useful if at least one field changed
+    // OR the caller provided a non-empty original. Empty street → not ok.
+    if (!street) {
+      return { ok: false, confidence: "low", error: "Could not recover a street line.", providerLabel: res.providerLabel };
+    }
+
+    return {
+      ok: true,
+      street,
+      city: city || undefined,
+      state: state || undefined,
+      postalcode: postalcode || undefined,
+      confidence:
+        confidenceRaw === "high" || confidenceRaw === "medium"
+          ? confidenceRaw
+          : "low",
+      providerLabel: res.providerLabel,
+    };
+  },
+});
