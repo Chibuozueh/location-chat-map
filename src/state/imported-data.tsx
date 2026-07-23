@@ -23,7 +23,6 @@ import {
 } from "@/lib/csv-import";
 import type { LocationDoc } from "@/components/atlas/types";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 
 export type GeocodeProgress = {
   total: number; // pending at start of pass
@@ -115,31 +114,46 @@ const EMPTY: ImportedState = {
   released: true,
 };
 
-/** Filenames probed (in order) for the native reference CSV. Vite serves
- *  everything in `public/` from the project root, so these resolve to
- *  `/data/atlas.csv` etc. The first one that returns 200 OK wins. */
+/** Filenames probed (in order) for the static `/data/*.csv` fallback.
+ *  Vite serves everything in `public/` from the project root, so these
+ *  resolve to `/data/atlas.csv` etc. The first one that returns 200 OK
+ *  wins once the Convex-storage / URL paths are exhausted. */
 const NATIVE_CSV_PATHS = ["/data/atlas.csv", "/data/assets.csv"] as const;
 
 /**
- * Storage id for the project-uploaded reference CSV. The user pastes the
- * file into the project's data tab (Convex storage) and gets back an id;
- * we resolve that id to a signed URL via `api.nativeCsv.getUrl` and the
- * browser fetches the file directly. Override this constant when the
- * reference spreadsheet is re-uploaded, or set `VITE_NATIVE_CSV_STORAGE_ID`
- * in the Freebuff keys panel to swap without a code change.
+ * Reference to the project's reference CSV. Resolved in this order:
+ *
+ *   1. `VITE_NATIVE_CSV_URL` — a full `http(s)://` URL pasted from a
+ *      Freebuff / Vercel Blob / S3 data tab. Freebuff hands back opaque
+ *      `csk-…` tokens that are NOT Convex `_storage` IDs, so this is the
+ *      only reliable way to reference them today.
+ *   2. `VITE_NATIVE_CSV_STORAGE_ID` — a 32-character Convex `_storage`
+ *      id used to be the canonical format. Kept for backward compat.
+ *   3. Otherwise we skip the storage path entirely and the static
+ *      `/data/*.csv` chain takes over.
+ *
+ * The native CSV (URL or ID) is baked into the localStorage cache key
+ * so re-uploading the reference file (which produces a new id) auto-
+ * invalidates older cache entries without an explicit `clear()`.
  */
-const NATIVE_CSV_STORAGE_ID =
-  (typeof import.meta.env?.VITE_NATIVE_CSV_STORAGE_ID === "string"
-    ? (import.meta.env.VITE_NATIVE_CSV_STORAGE_ID as string)
-    : "csk-rt46v4nwck69hx6k6jkvdmf86kp69k6tnrj5hykwpmf8ne43");
+const NATIVE_CSV_REF: string | null = (() => {
+  const fromUrl = import.meta.env?.VITE_NATIVE_CSV_URL;
+  if (typeof fromUrl === "string" && fromUrl.trim().length > 0) {
+    return fromUrl.trim();
+  }
+  const fromId = import.meta.env?.VITE_NATIVE_CSV_STORAGE_ID;
+  if (typeof fromId === "string" && fromId.trim().length > 0) {
+    return fromId.trim();
+  }
+  return null;
+})();
 
-/**
- * localStorage key for the cached native CSV. The storage id is baked
- * into the key so re-uploading the reference file (which produces a new
- * id) automatically invalidates any older cache without an explicit
- * clear().
- */
-const NATIVE_CACHE_KEY = `atlas.nativeCsv.v2.${NATIVE_CSV_STORAGE_ID}`;
+/** Cache key for the cached native CSV. Uses the reference verbatim so
+ *  re-uploading the reference (and getting a fresh id) auto-invalidates
+ *  the older snapshot. */
+const NATIVE_CACHE_KEY = `atlas.nativeCsv.v2.${
+  NATIVE_CSV_REF ?? "static"
+}`;
 
 type ImportedContextValue = {
   state: ImportedState;
@@ -322,13 +336,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Resolve the project's Convex-storage reference CSV into a public signed
-   * URL. Result is `string` when the file exists, `null` when it was
-   * removed, and `undefined` while the query is still loading.
+   * Resolve the project's reference CSV into a public URL. Result is a
+   * `string` when the reference was a URL (passed through) or a Convex
+   * storage ID that resolved. `null` means the reference was an
+   * unrecognised token (e.g. `csk-…` Freebuff blob); the client falls
+   * through to the static `/data/*.csv` chain and toasts the user. The
+   * query stays disabled when there's no reference at all, so a fresh
+   * install doesn't burn a Convex round-trip.
    */
   const nativeStorageUrl = useQuery(
     api.nativeCsv.getUrl,
-    { storageId: NATIVE_CSV_STORAGE_ID as Id<"_storage"> },
+    NATIVE_CSV_REF
+      ? { storageId: NATIVE_CSV_REF }
+      : "skip",
   );
 
   /**
@@ -444,6 +464,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * (instant) and try to fetch a fresher copy from `public/data/`
    * (background). User-uploaded files take precedence — we never
    * overwrite an active user import.
+   *
+   * When a reference is configured but the storage query resolves to
+   * `null` (the user's token — e.g. `csk-…` — is not a Convex `_storage`
+   * id nor a URL), we toast a clear "paste the full URL" hint instead
+   * of silently falling back. The fallback chain still kicks in
+   * behind it for the static `/data/*.csv` files.
    */
   useEffect(() => {
     let cancelled = false;
@@ -454,7 +480,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       // 2. Background: probe the canonical native paths and refresh.
       try {
         const fetched = await fetchNativeCsv();
-        if (cancelled || !fetched) return;
+        if (cancelled) return;
+        if (!fetched) {
+          if (NATIVE_CSV_REF && nativeStorageUrl === null) {
+            // We configured a reference but the storage query resolved
+            // to null — that means the token isn't a Convex storage id.
+            // Toast the action the user needs to take.
+            toast(
+              "Native CSV reference didn't resolve. Paste the full URL in VITE_NATIVE_CSV_URL (or upload the file in the data tab and use VITE_NATIVE_CSV_STORAGE_ID with a real Convex _storage id).",
+              { duration: 12_000 },
+            );
+          }
+          return;
+        }
         // Don't clobber a manual upload the user just made.
         setState((prev) => {
           if (prev.source === "upload" && prev.rows.length > 0) return prev;
@@ -484,7 +522,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [fetchNativeCsv, hydrateFromCache, importFromText]);
+  }, [fetchNativeCsv, hydrateFromCache, importFromText, nativeStorageUrl]);
 
   // Re-run the cascade on every previously-failed row. We move the failed
   // entries back into pending, reset the failed counter, and bump
