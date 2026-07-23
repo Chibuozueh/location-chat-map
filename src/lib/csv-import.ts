@@ -87,15 +87,16 @@ export type AddressFragment = {
 /**
  * Coarse accuracy bucket — surfaced to the client so the UI can
  * distinguish rows that came from a structured address match vs a zip
- * centroid vs a multi-tier fallback. `gemini-fixup` indicates the
- * address was first parsed/cleaned by the AI assistant, then re-geocoded
- * through the same cascade.
+ * centroid vs a multi-tier fallback. `cerebras-fixup` indicates the
+ * address was first parsed/cleaned by the Cerebras AI normalizer
+ * (the map side never uses Gemini — that's reserved for the chat
+ * assistant), then re-geocoded through the same cascade.
  */
 export type CoordAccuracy =
   | "exact"
   | "relaxed"
   | "zip-centroid"
-  | "gemini-fixup";
+  | "cerebras-fixup";
 
 export type ImportedRow = {
   doc: AtlasAsset;

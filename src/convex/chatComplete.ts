@@ -91,27 +91,17 @@ function readGeminiKey(): { key: string | null; envName: string | null } {
   return { key: null, envName: null };
 }
 
-/**
- * Accepted env-var names for the **map / address-normalization** key.
- * This is the dedicated key the user added in the Keys/API keys tab for
- * the geocoding pre-parser — it has its own quota and is intentionally
- * isolated from the chat's Gemini key so a noisy CSV upload can't
- * starve the conversational assistant.
- */
-const MAP_KEY_ENV_NAMES = [
-  "MAP_CHAT_KEY",
-  "MAPCHAT_KEY",
-  "MAP_CHAT_API_KEY",
-  "MAP_API_KEY",
-] as const;
-
-function readMapKey(): { key: string | null; envName: string | null } {
-  for (const name of MAP_KEY_ENV_NAMES) {
-    const v = process.env[name];
-    if (v && v.trim().length > 0) return { key: v.trim(), envName: name };
-  }
-  return { key: null, envName: null };
-}
+// ---------------------------------------------------------------------------
+//  MAP-SIDE ADDRESS NORMALIZATION
+//
+//  Gemini is **deliberately not used on the map**. The chat assistant owns
+//  every Gemini token quota and a noisy CSV import must not starve the
+//  conversational replies. Map-side address cleanup is wired to a single
+//  non-Gemini provider (Cerebras, OpenAI-compatible, fast inference). If
+//  Cerebras is unconfigured the row falls back to the deterministic
+//  geocode cascade with the raw address — which is fine for the
+//  well-formed Atlanta-area CSVs this app targets.
+// ---------------------------------------------------------------------------
 
 /** Per-provider config snapshot returned to callers. */
 export type ResolvedProvider = {
@@ -421,37 +411,13 @@ async function callNebius(
 }
 
 /**
- * Build a ProviderConfig snapshot for the dedicated map / address-normalization
- * key. Returns null when no map key is configured (caller falls through to
- * the Cerebras backup). We use the **same Gemini transport as the chat's
- * Gemini provider** because `MAP_CHAT_KEY` is almost certainly a Gemini key
- * with its own quota — keep the wire format identical so a future switch to
- * a different provider is a localized change.
- *
- * Per-key knobs (overridable via env):
- *   - MAP_CHAT_MODEL        (default: gemini-flash-latest)
- *   - MAP_CHAT_BASE_URL     (default: https://generativelanguage.googleapis.com/v1beta/models)
- */
-function buildMapChatConfig(): ProviderConfig | null {
-  const { key, envName } = readMapKey();
-  if (!key) return null;
-  return {
-    apiKey: key,
-    model: process.env.MAP_CHAT_MODEL ?? "gemini-flash-latest",
-    baseUrl: process.env.MAP_CHAT_BASE_URL ?? GEMINI_DEFAULT_BASE,
-    label: "MapChat · gemini-flash-latest",
-    keyEnv: envName ?? "MAP_CHAT_KEY",
-  };
-}
-
-/**
- * Accepted env-var names for the **map's fallback** provider.
+ * Accepted env-var names for the map's sole provider.
  *
  * Cerebras (`api.cerebras.ai/v1/chat/completions`) is the OpenAI-compatible
- * fast-inference endpoint the user wired in as a backup after MapChat started
- * rate-limiting on free-tier Gemini quotas. We keep the map chain at TWO
- * providers — MapChat first, Cerebras second — and never reach for the
- * chat chain.
+ * fast-inference endpoint the map normalizer calls. After the user's request
+ * to reserve Gemini exclusively for the chat assistant, the map chain is now
+ * single-provider: one call, no fall-through. Set `CEREBRAS_MODEL` /
+ * `CEREBRAS_BASE_URL` env vars to override the defaults.
  */
 const CEREBRAS_KEY_ENV_NAMES = [
   "CEREBRAS_API_KEY",
@@ -490,65 +456,15 @@ function buildMapCerebrasConfig(): ProviderConfig | null {
 }
 
 /**
- * Wrapper used by `normalizeAddress` (the map-side pre-parser). This is
- * STRICTLY scoped to the dedicated `MAP_CHAT_KEY` (and its aliases). It
- * deliberately never falls through to the chat chain's gemini / nebius
- * list — the chat runs on a separate Gemini key and a single noisy CSV
- * import must not starve the conversational assistant.
+ * Wrapper used by `normalizeAddress` (the map-side pre-parser). **Single
+ * call, single provider** — Cerebras only. Gemini is intentionally not in
+ * the map chain so its quota can be reserved for the chat assistant; a
+ * noisy CSV import will never starve the conversational replies.
  *
- * Behavior:
- *   1. If `MAP_CHAT_KEY` (or any MAP_KEY_ENV_NAMES alias) is configured,
- *      call the Gemini transport with that key. Returns the cleaned
- *      fragment when it succeeds.
- *   2. If the MapChat key returns a recoverable OR non-recoverable
- *      upstream error (429 / 503 / network / 401 / 403 / 400), return
- *      the error. The caller treats this as `ok=false` and the row
- *      falls back to the deterministic geocode cascade with the raw
- *      address — which may still succeed if the upstream CSV already
- *      looked canonical.
- *   3. If no MapChat key is configured at all, return a clear "set
- *      MAP_CHAT_KEY" hint so the user knows the map is bypassing AI
- *      normalization entirely. The row still goes through the
- *      deterministic cascade.
- */
-/** Dispatch to the right transport based on the cfg's label. The map chain
- *  uses both Gemini (native REST for MapChat) and Cerebras (OpenAI-
- *  compatible). Cerebras / Nebius / MapChat all share the OpenAI-compat
- *  wire format, but we keep this dispatch explicit so the helper used by
- *  the chat (`callLLM`) and the one used by the map (`callAddressNormalizer`)
- *  can diverge without breaking each other. */
-function callForMapCfg(
-  cfg: ProviderConfig,
-  opts: CallOpts,
-): Promise<LLMResult> {
-  return /Cerebras/.test(cfg.label)
-    ? callCerebras(cfg, opts)
-    : cfg.label.startsWith("Gemini")
-      ? callGemini(cfg, opts)
-      : callNebius(cfg, opts);
-}
-
-/**
- * Wrapper used by `normalizeAddress` (the map-side pre-parser). This is
- * STRICTLY scoped to the **map chain** — `MAP_CHAT_KEY` (Gemini-flash)
- * first, `CEREBRAS_API_KEY` (gpt-oss-120b, OpenAI-compat fast inference)
- * as a fallback. It deliberately never falls through to the chat chain's
- * `callLLM` pipeline — the chat runs on a separate Gemini key and a
- * single noisy CSV import must not starve the conversational assistant.
- *
- * Behavior:
- *   1. If `MAP_CHAT_KEY` is configured, call the Gemini transport with
- *      that key. On a RECOVERABLE error (429 / 503 / network / timeout)
- *      fall through to the Cerebras backup. On NON-RECOVERABLE (401 /
- *      403 / 400) abort — switching provider won't fix an auth or
- *      malformed-input problem.
- *   2. If MapChat is unconfigured, skip directly to Cerebras.
- *   3. If neither key is configured, return a clear "add MAP_CHAT_KEY /
- *      CEREBRAS_API_KEY" hint. The row still goes through the
- *      deterministic cascade.
- *   4. If BOTH providers are exhausted, return the last error verbatim
- *      with its label so the caller can surface "MapChat · offline" or
- *      "Cerebras · offline" in the map progress chip.
+ * If `CEREBRAS_API_KEY` is not configured, returns a clear "add
+ * CEREBRAS_API_KEY" hint and the row falls back to the deterministic
+ * geocode cascade with its raw address — which still works for the
+ * well-formed Atlanta-area CSVs this app targets.
  */
 async function callAddressNormalizer(opts: {
   system: string;
@@ -556,46 +472,33 @@ async function callAddressNormalizer(opts: {
   maxOutputTokens?: number;
   temperature?: number;
 }): Promise<LLMResult> {
-  const chain = [
-    buildMapChatConfig(),
-    buildMapCerebrasConfig(),
-  ].filter((c): c is ProviderConfig => !!c);
-  if (chain.length === 0) {
+  const cfg = buildMapCerebrasConfig();
+  if (!cfg) {
     return {
       error:
-        "MapChat AI offline — add MAP_CHAT_KEY (or CEREBRAS_API_KEY as a backup) in the project's Keys/API keys tab to enable AI address normalization.",
+        "Map AI offline — add CEREBRAS_API_KEY in the project's Keys/API keys tab to enable AI address normalization. (Gemini is reserved for the chat assistant and is not used on the map.)",
     };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    let lastError: string | undefined;
-    for (const cfg of chain) {
-      const callOpts: CallOpts = {
-        system: opts.system,
-        user: opts.user,
-        signal: controller.signal,
-        temperature: opts.temperature,
-        maxOutputTokens: opts.maxOutputTokens,
-      };
-      const result = await callForMapCfg(cfg, callOpts);
-      if (!result.error) {
-        return { ...result, providerLabel: cfg.label };
-      }
-      const e = result.error;
-      const nonRecoverable =
-        /was rejected by/.test(e) ||
-        /wasn't 2 letters|wasn't 5 digits|returned 4\d\d|returned 400\b/i.test(
-          e,
-        );
-      lastError = e;
-      console.warn(
-        `[mapNormalizer] ${cfg.label} failed (${nonRecoverable ? "non-recoverable" : "recoverable"}${chain.length > 1 ? ", trying next map provider" : ", NOT touching the chat Gemini key"}): ${e}`,
-      );
-      if (nonRecoverable) break;
-      // else: try the next map provider (Cerebras backup)
+    const result = await callCerebras(cfg, {
+      system: opts.system,
+      user: opts.user,
+      signal: controller.signal,
+      temperature: opts.temperature,
+      maxOutputTokens: opts.maxOutputTokens,
+    });
+    if (result.error) {
+      // The transport's error strings still say "Atlas Assistant" (the
+      // chat-side label). Map-side failures should label themselves as
+      // "Map AI" so the user can tell at a glance that the chat key is
+      // fine and only the dedicated map normalizer is offline.
+      const mapped = result.error.replace(/Atlas Assistant/g, "Map AI");
+      console.warn(`[mapNormalizer] ${cfg.label} failed: ${mapped}`);
+      return { ...result, error: mapped };
     }
-    return { error: lastError ?? "Atlas Assistant is offline." };
+    return { ...result, providerLabel: cfg.label };
   } finally {
     clearTimeout(timeout);
   }
@@ -692,22 +595,10 @@ export async function providerStatus(): Promise<{
   } | null;
   triedEnvVars: string[];
   /**
-   * Dedicated map / address-normalization key. Lives outside the chat
-   * chain so the user can see at a glance whether the geocode pre-parser
-   * has its own quota or is silently borrowing the chat's Gemini key.
-   */
-  mapKey: {
-    configured: boolean;
-    activeEnvName: string | null;
-    label: string;
-    model: string;
-  };
-  mapKeyEnvVars: string[];
-  /**
-   * Map-side Cerebras backup (`gpt-oss-120b`, OpenAI-compat fast
-   * inference). Wired in after MapChat started rate-limiting on
-   * free-tier Gemini. Surfaced here so the user can confirm the key
-   * is actually visible to the Convex runtime.
+   * Map-side Cerebras provider (`gpt-oss-120b`, OpenAI-compat fast
+   * inference). The map chain now resolves to Cerebras only — Gemini is
+   * reserved for the chat assistant. Surfaced here so the user can
+   * confirm the key is actually visible to the Convex runtime.
    */
   cerebrasKey: {
     configured: boolean;
@@ -719,7 +610,6 @@ export async function providerStatus(): Promise<{
 }> {
   const chain = resolveProviders();
   const primary = resolvePrimaryProvider();
-  const mapCfg = buildMapChatConfig();
   const cerebrasCfg = buildMapCerebrasConfig();
   return {
     chain: chain.map(({ name, cfg }) => ({
@@ -738,20 +628,6 @@ export async function providerStatus(): Promise<{
         }
       : null,
     triedEnvVars: [...GEMINI_KEY_ENV_NAMES],
-    mapKey: mapCfg
-      ? {
-          configured: true,
-          activeEnvName: mapCfg.keyEnv,
-          label: mapCfg.label,
-          model: mapCfg.model,
-        }
-      : {
-          configured: false,
-          activeEnvName: null,
-          label: "MapChat · gemini-flash-latest",
-          model: process.env.MAP_CHAT_MODEL ?? "gemini-flash-latest",
-        },
-    mapKeyEnvVars: [...MAP_KEY_ENV_NAMES],
     cerebrasKey: cerebrasCfg
       ? {
           configured: true,

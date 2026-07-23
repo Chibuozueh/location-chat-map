@@ -34,23 +34,24 @@ export type GeocodeProgress = {
   relaxed: number;
   /** Zip centroid (Atlanta table or Zippopotam.us fallback). */
   zipCentroid: number;
-  /** Rows that the Gemini-normalize + re-run cascade recovered. */
-  geminiCleaned: number;
-  /** Rows Gemini returned ok=false for (no fabrication, gave up). */
-  geminiSkipped: number;
-  /** Rows where the Gemini call itself errored (transient). */
-  geminiError: number;
-  /** Number of times we've actually hit the MapChat `normalizeAddress`
+  /** Rows that the Cerebras AI cleanup successfully returned and the
+   *  cascade then accepted. */
+  cerebrasCleaned: number;
+  /** Rows Cerebras returned ok=false for (no fabrication, gave up). */
+  cerebrasSkipped: number;
+  /** Rows where the Cerebras call itself errored (transient). */
+  cerebrasError: number;
+  /** Number of times we've actually hit the map-side `normalizeAddress`
    *  action (whether the result was a clean, skip, or error). Surfaced in
    *  the UI so the user can see the API is being called and how many
    *  calls have happened so far in this pass. */
-  geminiCallsMade: number;
-  /** Whichever provider answered the last successful MapChat call. Surfaced
-   *  in the chip so the user can tell at a glance which key powered the
-   *  normalizer ("MapChat · gemini-flash-latest" when MAP_CHAT_KEY is
-   *  set, "Gemini · gemini-flash-latest" when only the chat chain is
-   *  available, etc.). */
-  mapProviderLabel: string | null;
+  cerebrasCallsMade: number;
+  /** Whichever Cerebras model answered the last successful map call.
+   *  Surfaced in the chip so the user can tell at a glance which key
+   *  (and which model) powered the normalizer ("Cerebras · gpt-oss-120b"
+   *  when configured, "Cerebras · offline" when the key is unset or
+   *  rejected). Gemini is no longer in the map chain. */
+  cerebrasModelLabel: string | null;
   failed: number;
   active: boolean;
 };
@@ -74,7 +75,7 @@ type ImportedState = {
    *  vs. a static reference file shipped in `public/data/`. */
   source: "native" | "upload" | null;
   /** Pre-validation gate. False while the FIRST post-import pass is still
-   *  running MapChat `normalizeAddress` + the geocode cascade over every
+   *  running Cerebras `normalizeAddress` + the geocode cascade over every
    *  pending row. While false, `state.rows` (and `state.failed`) are held
    *  empty so the map + chat show nothing from the import until the AI
    *  pre-validation completes end-to-end. Manual Retry clicks (after the
@@ -90,11 +91,11 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   exact: 0,
   relaxed: 0,
   zipCentroid: 0,
-  geminiCleaned: 0,
-  geminiSkipped: 0,
-  geminiError: 0,
-  geminiCallsMade: 0,
-  mapProviderLabel: null,
+  cerebrasCleaned: 0,
+  cerebrasSkipped: 0,
+  cerebrasError: 0,
+  cerebrasCallsMade: 0,
+  cerebrasModelLabel: null,
   failed: 0,
   active: false,
 };
@@ -192,7 +193,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     Map<string, { lat: number; lng: number; accuracy: CoordAccuracy }>
   >(new Map());
 
-  // Cache successful Gemini normalizations keyed by rawStreet + geoKey so
+  // Cache successful Cerebras normalizations keyed by rawStreet + geoKey so
   // re-imports / Retry don't double-charge the model.
   const normalizeCacheRef = useRef<
     Map<
@@ -236,7 +237,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    *
    * Pre-validation gate: if there are pending rows, we hold `rows`,
    * `chatOnly`, and `failed` empty until the geocode loop finishes — the
-   * MapChat `normalizeAddress` action runs as Step 2 of every pending
+   * Cerebras `normalizeAddress` action runs as Step 2 of every pending
    * row, so once the loop completes we have a fully-validated set ready
    * for the map + chat.
    */
@@ -293,11 +294,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           exact: 0,
           relaxed: 0,
           zipCentroid: 0,
-          geminiCleaned: 0,
-          geminiSkipped: 0,
-          geminiError: 0,
-          geminiCallsMade: 0,
-          mapProviderLabel: null,
+          cerebrasCleaned: 0,
+          cerebrasSkipped: 0,
+          cerebrasError: 0,
+          cerebrasCallsMade: 0,
+          cerebrasModelLabel: null,
           failed: 0,
           active: pendingCount > 0,
         },
@@ -337,8 +338,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    *
    * NOTE: this query is intentionally about the native CSV's URL, NOT
    * about which provider answers the chat. The map's AI normalizer
-   * (callAddressNormalizer in convex/chatComplete.ts) uses MAP_CHAT_KEY
-   * independently and never touches the chat Gemini key — so a noisy
+   * (`callAddressNormalizer` in convex/chatComplete.ts) uses
+   * `CEREBRAS_API_KEY` only and never touches the chat Gemini key — so a noisy
    * CSV import can't starve the conversational chat.
    */
   const nativeStorageUrl = useQuery(
@@ -545,8 +546,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           ...prev.progress,
           total: prev.progress.total + prev.failed.length,
           failed: 0,
-          geminiSkipped: 0,
-          geminiError: 0,
+          cerebrasSkipped: 0,
+          cerebrasError: 0,
           active: true,
         },
       };
@@ -556,18 +557,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // Geocode loop. Runs whenever a brand-new upload lands (signaled by
   // importedAt) OR the user fires a Retry (signaled by retryNonce).
   //
-  // Per-row flow (Gemini-first):
+  // Per-row flow (Cerebras-first):
   //   1. Coord-cache hit on the raw address? — instant place, done.
-  //   2. Gemini normalize FIRST. The model reformats the row into a
+  //   2. Cerebras normalize FIRST. The model reformats the row into a
   //      standard address, fills missing city/state from Atlanta context,
   //      and may resolve local landmark references to their real
   //      addresses. The cleaned fragment is cached so re-imports /
   //      Retry don't double-charge the model.
   //   3. Run the deterministic cascade (structured Nominatim → relaxed
   //      → Atlanta zip-centroid table → Zippopotam.us) using the cleaned
-  //      fragment. If Gemini was used AND the cascade returned anything,
-  //      `coordAccuracy = "gemini-fixup"` so the user knows the AI parser
-  //      was on the path (even if the cascade found it cleanly).
+  //      fragment. If Cerebras was used AND the cascade returned
+  //      anything, `coordAccuracy = "cerebras-fixup"` so the user knows
+  //      the AI parser was on the path (even when the cascade found it
+  //      cleanly).
   useEffect(() => {
     if (!state.pending.length) return;
     if (!state.progress.active) return;
@@ -597,11 +599,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
         let coord: { lat: number; lng: number } | null = null;
         let accuracy: CoordAccuracy | null = null;
-        let source: "cached" | "fetched" | "gemini-fixup" | null = null;
+        let source: "cached" | "fetched" | "cerebras-fixup" | null = null;
         let llmOutcome: "cleaned" | "skipped" | "errored" | null = null;
-        let geminiAttempted = false;
-        // Whichever provider answered this row's MapChat call. Stays null
-        // until `geminiAttempted` is true.
+        let cerebrasAttempted = false;
+        // Whichever Cerebras model answered this row's map call. Stays
+        // null until `cerebrasAttempted` is true.
         let lastProviderLabel: string | null = null;
 
         // Step 1: coord-cache hit on raw address → instant place.
@@ -612,7 +614,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           source = "cached";
         }
 
-        // Step 2: Gemini normalize FIRST (skip if no street OR no key).
+        // Step 2: Cerebras normalize FIRST (skip if no street OR no key).
         let addressForGeocode: AddressFragment = {
           street: doc.address ?? "",
           city: doc.city ?? "",
@@ -636,17 +638,17 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             cleaned = cachedClean;
             llmOutcome = "cleaned";
           } else if (cachedClean && !cachedClean.ok) {
-            // Cached "Gemini refused" — skip the model call entirely.
+            // Cached "Cerebras refused" — skip the model call entirely.
             llmOutcome = "skipped";
           } else {
-            geminiAttempted = true;
+            cerebrasAttempted = true;
             // Log the outgoing call so the user can verify in DevTools
             // that the action is firing, and which row is on the wire.
             // Counter surfacing in the chat panel header is the
             // visible companion to this log; the console line is the
             // forensic check.
             console.info(
-              `[atlas/llm-normalize] calling MapChat for "${doc.name}" (#${
+              `[atlas/llm-normalize] calling Cerebras for "${doc.name}" (#${
                 i + 1
               }/${state.pending.length}); raw street = "${rawStreet}", zip = "${
                 doc.postalCode ?? ""
@@ -664,7 +666,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 knownCountry: "USA",
               });
               console.info(
-                `[atlas/llm-normalize] MapChat returned for "${doc.name}":`,
+                `[atlas/llm-normalize] Cerebras returned for "${doc.name}":`,
                 {
                   ok: !!clean.ok,
                   provider: clean.providerLabel ?? null,
@@ -697,11 +699,13 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 normalizeCacheRef.current.set(cleanCacheKey, {
                   ok: false,
                 });
-                // Surface the MapChat key state in the chip so the user
-                // can tell at a glance whether the dedicated map key was
-                // configured but rate-limited, or simply not set.
-                if (/MapChat.*offline|MAP_CHAT_KEY/i.test(clean.error)) {
-                  lastProviderLabel = "MapChat · offline";
+                // Surface the Cerebras key state in the chip so the user
+                // can tell at a glance whether the dedicated map key is
+                // configured but rate-limited, or simply not set. Gemini
+                // is no longer in the map chain, so the only "offline"
+                // label we emit here is the Cerebras one.
+                if (/Cerebras.*offline|CEREBRAS_API_KEY/i.test(clean.error)) {
+                  lastProviderLabel = "Cerebras · offline";
                 }
               } else {
                 llmOutcome = "skipped";
@@ -738,11 +742,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             });
             if (result) {
               coord = { lat: result.lat, lng: result.lng };
-              // If Gemini was used on this row, mark it as a gemini-fixup
-              // for transparency — even when the cascade returned `exact`.
+              // If Cerebras was used on this row, mark it as a
+              // cerebras-fixup for transparency — even when the cascade
+              // returned `exact`.
               accuracy =
-                llmOutcome === "cleaned" ? "gemini-fixup" : result.accuracy;
-              source = llmOutcome === "cleaned" ? "gemini-fixup" : "fetched";
+                llmOutcome === "cleaned" ? "cerebras-fixup" : result.accuracy;
+              source = llmOutcome === "cleaned" ? "cerebras-fixup" : "fetched";
               if (key) {
                 coordCacheRef.current.set(key, {
                   lat: result.lat,
@@ -823,21 +828,21 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 (source === "fetched" && accuracy === "zip-centroid"
                   ? 1
                   : 0),
-              geminiCleaned:
-                prev.progress.geminiCleaned +
+              cerebrasCleaned:
+                prev.progress.cerebrasCleaned +
                 (llmOutcome === "cleaned" ? 1 : 0),
-              geminiSkipped:
-                prev.progress.geminiSkipped +
+              cerebrasSkipped:
+                prev.progress.cerebrasSkipped +
                 (llmOutcome === "skipped" ? 1 : 0),
-              geminiError:
-                prev.progress.geminiError +
+              cerebrasError:
+                prev.progress.cerebrasError +
                 (llmOutcome === "errored" ? 1 : 0),
-              geminiCallsMade:
-                prev.progress.geminiCallsMade + (geminiAttempted ? 1 : 0),
-              mapProviderLabel:
-                geminiAttempted && lastProviderLabel
+              cerebrasCallsMade:
+                prev.progress.cerebrasCallsMade + (cerebrasAttempted ? 1 : 0),
+              cerebrasModelLabel:
+                cerebrasAttempted && lastProviderLabel
                   ? lastProviderLabel
-                  : prev.progress.mapProviderLabel,
+                  : prev.progress.cerebrasModelLabel,
               active: remainingPending.length > 0,
             },
           };
@@ -849,9 +854,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         if (source === "fetched") {
           await new Promise((r) => setTimeout(r, NOMINATIM_SPACING_MS));
         }
-        // Slow the Gemini call cadence to stay well below common free-tier
-        // per-minute caps when parsing every row.
-        if (geminiAttempted) {
+        // Slow the Cerebras call cadence to stay well below common
+        // free-tier per-minute caps when parsing every row. (Cerebras
+        // is much more permissive than flash Gemini, but a 4 s default
+        // keeps the user-visible call counter legible while also
+        // avoiding rate limits on noisy 100-row imports.)
+        if (cerebrasAttempted) {
           await new Promise((r) =>
             setTimeout(r, DEFAULT_LLM_NORMALIZE_SPACING_MS),
           );

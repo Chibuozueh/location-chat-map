@@ -333,11 +333,13 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     importedState.pending.length > 0 ||
     importedState.failed.length > 0;
   /**
-   * The atlas pre-validates every pending row through the MapChat
-   * Gemini + deterministic cascade before releasing them to the map
-   * or to chat search. Chat uses the imported set as its reference
-   * data — so during the gate the visible context is empty (only
-   * the 12 curated seeds), and the chip explicitly says so.
+   * The atlas pre-validates every pending row through the Cerebras
+   * normalizer + deterministic cascade before releasing them to the
+   * map or to chat search. Chat uses the imported set as its reference
+   * data — so during the pre-validation pass the visible context is
+   * the merged set (rows paint progressively), and the chip labels the
+   * gate explicitly. Gemini is NOT used on the map side — it's reserved
+   * for the chat narration pipeline above.
    */
   const nativeCsvActive = importedState.source === "native";
   const preValidating =
@@ -375,7 +377,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
       : merged.mappable.length + merged.chatOnly.length;
   const referenceLabel = preValidating
     ? nativeCsvActive
-      ? `Pre-validating ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"} via MapChat\u2026`
+      ? `Pre-validating ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"} via Cerebras\u2026`
       : `Geocoding ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"}\u2026`
     : hasImports
       ? importedState.source === "native"
@@ -639,42 +641,42 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                     · {importedState.progress.zipCentroid} zip-centroid
                   </span>
                 )}
-                {importedState.progress.geminiCleaned > 0 && (
+                {importedState.progress.cerebrasCleaned > 0 && (
                   <span
                     className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
-                    title="Rows that the assistant cleanly re-formatted and the geocoder then accepted."
+                    title="Rows that Cerebras cleanly re-formatted and the geocoder then accepted."
                   >
                     <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-[#6e0e1e]" />
-                    {importedState.progress.geminiCleaned} gemini-cleaned
+                    {importedState.progress.cerebrasCleaned} cerebras-cleaned
                   </span>
                 )}
-                {/* Live MapChat call counter. Visible from the first row the
-                    AI touches so the user can verify the action is firing
-                    without waiting for the loop to finish. Tied to
-                    `console.info("[atlas/llm-normalize] calling MapChat
+                {/* Live Cerebras call counter. Visible from the first row the
+                    map normalizer touches so the user can verify the action
+                    is firing without waiting for the loop to finish. Tied to
+                    `console.info("[atlas/llm-normalize] calling Cerebras
                     …")` in imported-data.tsx so the same info shows up in
-                    DevTools. */}
-                {importedState.progress.geminiCallsMade > 0 && (
+                    DevTools. Gemini is not used on the map side. */}
+                {importedState.progress.cerebrasCallsMade > 0 && (
                   <span
                     className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
                     title={
-                      importedState.progress.mapProviderLabel
-                        ? `Actual outbound calls to ${importedState.progress.mapProviderLabel}. Detailed log in DevTools (filter: [atlas/llm-normalize]).`
+                      importedState.progress.cerebrasModelLabel
+                        ? `Actual outbound calls to ${importedState.progress.cerebrasModelLabel}. Detailed log in DevTools (filter: [atlas/llm-normalize]).`
                         : `Detailed log in DevTools (filter: [atlas/llm-normalize]).`
                     }
                   >
                     <span aria-hidden className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#6e0e1e]" />
-                    {importedState.progress.geminiCallsMade} MapChat call{importedState.progress.geminiCallsMade === 1 ? "" : "s"}
-                    {importedState.progress.mapProviderLabel ? (
+                    {importedState.progress.cerebrasCallsMade} Cerebras call{importedState.progress.cerebrasCallsMade === 1 ? "" : "s"}
+                    {importedState.progress.cerebrasModelLabel ? (
                       <span className="ml-0.5 font-normal normal-case tracking-normal text-[#6e0e1e]/80">
-                        · {importedState.progress.mapProviderLabel}
+                        · {importedState.progress.cerebrasModelLabel}
                       </span>
                     ) : null}
                   </span>
                 )}
-                {importedState.progress.geminiError > 0 && (
+                {importedState.progress.cerebrasError > 0 && (
                   <span className="text-foreground/70">
-                    · {importedState.progress.geminiError} gemini errors
+                    · {importedState.progress.cerebrasError} cerebras errors
                   </span>
                 )}
                 {importedState.progress.failed > 0 && (
