@@ -60,6 +60,12 @@ export type ChatMessage = {
   rubric?: { totalSignals: number; matchedSignals: number } | null;
   /** Structured per-match evidence blocks (profile/list/snapshot view). */
   evidence?: AssetEvidence[];
+  /** LLM-composed narration from Nebius (overrides `content` when set). */
+  llmContent?: string | null;
+  /** Friendly error bubble when the model is unreachable. */
+  llmError?: string | null;
+  /** True while a chatCompletions request is in flight. */
+  isLlmLoading?: boolean;
 };
 
 export type AtlasIntent = {

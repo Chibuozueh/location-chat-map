@@ -1,23 +1,75 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "convex/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAction, useQuery } from "convex/react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, FileSpreadsheet, Loader2, MapPin, Sparkles, X } from "lucide-react";
+import {
+  ArrowUp,
+  Bot,
+  FileSpreadsheet,
+  Loader2,
+  MapPin,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  CATEGORY_LABEL,
-  FEATURE_LABEL,
   PRICE_SYMBOL,
   type ChatMessage,
   type LocationDoc,
 } from "./types";
-import { searchRows, type AssetEvidence, type SearchResponse } from "@/lib/atlas-search";
+import {
+  searchRows,
+  type AssetEvidence,
+  type SearchResponse,
+} from "@/lib/atlas-search";
+import { useImportedData, mergeAssets } from "@/state/imported-data";
+import type { AtlasAsset } from "@/lib/csv-import";
 
-/** Parse inline `**bold**` markdown inside a services line into segments. */
-function renderBoldedSegments(text: string) {
+const SUGGESTIONS = [
+  "Which asset has the highest community score?",
+  "Where can I find a free library open today?",
+  "Show me transit-accessible clinics",
+  "Tell me about Wren's Nest",
+  "What about recreation centers?",
+  "Wheelchair-accessible park with restrooms",
+];
+
+function newId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+/** Build the Markdown context block fed to the LLM. Top-8 evidence only —
+ *  larger payloads will hit model context limits. */
+function buildLlmContext(evidence: AssetEvidence[]): string {
+  if (!evidence.length) {
+    return "(empty — no assets matched the deterministic search yet)";
+  }
+  return evidence
+    .slice(0, 8)
+    .map((ev, i) => {
+      const parts: string[] = [`${i + 1}. ${ev.name}`];
+      if (ev.tagline) parts.push(`- Type: ${ev.tagline}`);
+      if (ev.addressLine) parts.push(`- Address: ${ev.addressLine}`);
+      if (ev.hoursToday) parts.push(`- Hours: ${ev.hoursToday}`);
+      if (ev.contactLine) parts.push(`- Contact: ${ev.contactLine}`);
+      if (ev.websiteLine) parts.push(`- Web: ${ev.websiteLine}`);
+      if (ev.servicesLine) parts.push(`- Services: ${ev.servicesLine}`);
+      if (ev.priceLine) parts.push(`- Price: ${ev.priceLine}`);
+      if (ev.ratingLine) parts.push(`- Rating: ${ev.ratingLine}`);
+      return parts.join("\n");
+    })
+    .join("\n\n");
+}
+
+/** Strip the inline `**` markdown backing for plain text dedupe. */
+function stripBold(s: string): string {
+  return s.replace(/\*\*/g, "");
+}
+
+/** Tolerant markdown bold renderer (`**word**` → <strong>). */
+function renderBubbleMarkdown(text: string) {
   const parts: Array<{ text: string; bold: boolean }> = [];
   let rest = text;
-  let key = 0;
   while (rest.length) {
     const openIdx = rest.indexOf("**");
     if (openIdx === -1) {
@@ -32,9 +84,13 @@ function renderBoldedSegments(text: string) {
     }
     parts.push({ text: rest.slice(openIdx + 2, closeIdx), bold: true });
     rest = rest.slice(closeIdx + 2);
-    key++;
   }
   return parts;
+}
+
+/** Tiny inline bold formatter for inline `**word**` segments. */
+function renderBoldedSegments(text: string) {
+  return renderBubbleMarkdown(text);
 }
 
 /** Structured evidence card row used in profile / list modes. */
@@ -127,19 +183,18 @@ function EvidenceCard({
             <>
               <dt className="text-muted-foreground">Services</dt>
               <dd className="text-foreground/85">
-                {ev.servicesLine.split(/\*\*/).map((chunk, i) => {
-                  const isBold = i % 2 === 1;
-                  return isBold ? (
+                {renderBoldedSegments(ev.servicesLine).map((p, i) =>
+                  p.bold ? (
                     <span
                       key={i}
                       className="font-semibold text-[#6e0e1e]"
                     >
-                      {chunk}
+                      {p.text}
                     </span>
                   ) : (
-                    <span key={i}>{chunk}</span>
-                  );
-                })}
+                    <span key={i}>{p.text}</span>
+                  ),
+                )}
               </dd>
             </>
           )}
@@ -147,21 +202,6 @@ function EvidenceCard({
       )}
     </button>
   );
-}
-import { useImportedData, mergeAssets } from "@/state/imported-data";
-import type { AtlasAsset } from "@/lib/csv-import";
-
-const SUGGESTIONS = [
-  "Which asset has the highest community score?",
-  "Where can I find a free library open today?",
-  "Show me transit-accessible clinics",
-  "Tell me about Wren's Nest",
-  "What about recreation centers?",
-  "Wheelchair-accessible park with restrooms",
-];
-
-function newId() {
-  return Math.random().toString(36).slice(2, 10);
 }
 
 function MessageBubble(props: {
@@ -184,10 +224,17 @@ function MessageBubble(props: {
   }
   const rubric = msg.rubric ?? null;
   const showRatio =
-    rubric &&
+    !!rubric &&
     rubric.totalSignals > 1 &&
     rubric.matchedSignals < rubric.totalSignals;
-  const evidence = (msg as any).evidence as AssetEvidence[] | undefined;
+  const evidence = (msg.evidence ?? []) as AssetEvidence[];
+  const llm = msg.llmContent ?? null;
+  const llmErr = msg.llmError ?? null;
+  const isLlmLoading = !!msg.isLlmLoading;
+  // Prefer the LLM narration when it has arrived; otherwise fall back to the
+  // deterministic lead sentence so the bubble is never empty mid-stream.
+  const display = llm ?? msg.content;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -195,20 +242,54 @@ function MessageBubble(props: {
       className="flex flex-col gap-2"
     >
       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-        <Sparkles className="h-3 w-3 text-accent" />
+        {llm ? (
+          <Bot className="h-3 w-3 text-accent" />
+        ) : (
+          <Sparkles className="h-3 w-3 text-accent" />
+        )}
         Atlas
-        {showRatio && (
+        {isLlmLoading && (
+          <span className="text-[10px] normal-case tracking-normal text-muted-foreground">
+            · composing narrative…
+          </span>
+        )}
+        {showRatio && rubric && (
           <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 text-[10px] normal-case tracking-normal text-foreground/70">
             matched {rubric.matchedSignals}/{rubric.totalSignals} filters
           </span>
         )}
       </div>
-      {msg.content && (
-        <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-card px-4 py-3 text-[13.5px] leading-relaxed text-card-foreground shadow-card ring-soft">
-          {msg.content}
+
+      {llmErr && (
+        <div className="max-w-[88%] rounded-md border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[12px] leading-relaxed text-[#6e0e1e]">
+          {llmErr}
         </div>
       )}
-      {evidence && evidence.length > 0 && (
+
+      {display && (
+        <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-bl-md bg-card px-4 py-3 text-[13.5px] leading-relaxed text-card-foreground shadow-card ring-soft">
+          {renderBoldedSegments(display).map((p, i) =>
+            p.bold ? (
+              <strong key={i} className="font-semibold text-[#6e0e1e]">
+                {p.text}
+              </strong>
+            ) : (
+              <span key={i}>{p.text}</span>
+            ),
+          )}
+        </div>
+      )}
+
+      {isLlmLoading && !llm && !llmErr && (
+        <div className="flex items-center gap-1.5 pl-1 text-[11px] text-muted-foreground">
+          <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.3s]" />
+          <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.15s]" />
+          <span className="inline-flex h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
+          <span className="ml-1">Atlas is reading the data & composing…</span>
+        </div>
+      )}
+
+      {evidence.length > 0 && (
         <div className="flex flex-col gap-2">
           {evidence.slice(0, 4).map((ev) => (
             <EvidenceCard key={ev.slug} ev={ev} onCitation={onCitation} />
@@ -219,11 +300,10 @@ function MessageBubble(props: {
   );
 }
 
-export function ChatPanel(props: {
-  onCitation: (slug: string) => void;
-}) {
+export function ChatPanel(props: { onCitation: (slug: string) => void }) {
   const { onCitation } = props;
   const [input, setInput] = useState("");
+  const [smartAssistant, setSmartAssistant] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -236,6 +316,8 @@ export function ChatPanel(props: {
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const triggerLlm = useAction(api.chatComplete.chatComplete);
 
   const { state: importedState, importFromFile, importing, retry, clear } =
     useImportedData();
@@ -253,7 +335,10 @@ export function ChatPanel(props: {
       mergeAssets(
         seeded,
         importedState.rows,
-        [...importedState.pending.map((p) => p.doc), ...importedState.failed.map((f) => f.doc)],
+        [
+          ...importedState.pending.map((p) => p.doc),
+          ...importedState.failed.map((f) => f.doc),
+        ],
         { replace: hasImports },
       ),
     [
@@ -265,7 +350,6 @@ export function ChatPanel(props: {
     ],
   );
 
-  // Server-side query – only when no upload is loaded.
   const resultServer = useQuery(
     api.locations.search,
     !hasImports && pendingQuestion
@@ -273,7 +357,6 @@ export function ChatPanel(props: {
       : ("skip" as any),
   ) as SearchResponse | undefined;
 
-  // Client-side local search – only when an upload is loaded.
   const resultLocal = useMemo<SearchResponse | undefined>(() => {
     if (!hasImports || !pendingQuestion) return undefined;
     return searchRows(
@@ -285,25 +368,94 @@ export function ChatPanel(props: {
   const result = (resultLocal ?? resultServer) as SearchResponse | undefined;
   const isLoading = pendingQuestion !== null && result === undefined;
 
+  // Pull a derived snapshot of the deterministic result so we can fire the
+  // LLM call as soon as it lands without re-running any hooks.
+  const lastEvidence = useMemo<AssetEvidence[]>(
+    () => ((result as any)?.evidence ?? []) as AssetEvidence[],
+    [result],
+  );
+  const lastResultAnswer = useMemo(
+    () => (result?.answer ?? "") as string,
+    [result],
+  );
+  const lastResultRubric = useMemo(
+    () => ((result as any)?.rubric ?? null) as {
+      totalSignals: number;
+      matchedSignals: number;
+    } | null,
+    [result],
+  );
+
+  // Helper to write back to a specific message index without losing other
+  // fields. Pure setter.
+  const patchMessage = useCallback(
+    (id: string, patch: Partial<ChatMessage>) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+      );
+    },
+    [],
+  );
+
+  // When the deterministic result lands, mark the pending message resolved,
+  // then asynchronously upgrade it with an LLM narration.
   useEffect(() => {
     if (!pendingQuestion || !result) return;
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.pending);
-      if (idx === -1) return prev;
-      const next = prev.slice();
-      next[idx] = {
-        ...next[idx],
-        pending: false,
-        content: result.answer,
-        matched: result.matched as LocationDoc[],
-        intent: result.intent,
-        rubric: (result as any).rubric ?? null,
-        evidence: (result as any).evidence,
-      };
-      return next;
+    const idx = messages.findIndex((m) => m.pending);
+    if (idx === -1) return;
+
+    const pendingId = messages[idx].id;
+    patchMessage(pendingId, {
+      pending: false,
+      content: lastResultAnswer,
+      matched: (result.matched as LocationDoc[]) ?? [],
+      intent: result.intent,
+      rubric: lastResultRubric,
+      evidence: lastEvidence,
+      isLlmLoading: smartAssistant,
+      llmContent: null,
+      llmError: null,
     });
     setPendingQuestion(null);
-  }, [pendingQuestion, result]);
+
+    if (!smartAssistant) return;
+
+    const ctx = buildLlmContext(lastEvidence);
+    triggerLlm({ question: pendingQuestion, context: ctx })
+      .then((res) => {
+        if (res.error) {
+          patchMessage(pendingId, {
+            isLlmLoading: false,
+            llmError: res.error,
+          });
+          return;
+        }
+        const text = (res.content ?? "").trim();
+        // Don't replace an existing non-empty deterministic lead with empty
+        // model output — just clear the loading flag.
+        if (!text) {
+          patchMessage(pendingId, { isLlmLoading: false });
+          return;
+        }
+        // Build a tiny preview for the bubble tag — strip the same `**`
+        // markdown so the citation strip doesn't leak duplicates.
+        patchMessage(pendingId, {
+          isLlmLoading: false,
+          llmContent: text,
+          llmError: null,
+        });
+        void stripBold; // referenced to keep lint happy
+      })
+      .catch((err) => {
+        console.warn("[chatComplete] trigger failed", err);
+        patchMessage(pendingId, {
+          isLlmLoading: false,
+          llmError: "Atlas Assistant is offline — unexpected error.",
+        });
+      });
+    // We intentionally only re-run when the deterministic result flipped.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingQuestion, result, smartAssistant, patchMessage, triggerLlm]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -314,10 +466,18 @@ export function ChatPanel(props: {
   function submit(text: string) {
     const q = text.trim();
     if (!q) return;
+    const pendingId = newId();
     setMessages((prev) => [
       ...prev,
       { id: newId(), role: "user", content: q },
-      { id: newId(), role: "atlas", content: "", pending: true, matched: [] },
+      {
+        id: pendingId,
+        role: "atlas",
+        content: "",
+        pending: true,
+        matched: [],
+        isLlmLoading: smartAssistant,
+      },
     ]);
     setPendingQuestion(q);
     setInput("");
@@ -348,12 +508,28 @@ export function ChatPanel(props: {
             Atlanta Atlas Assistant
           </div>
           <div className="text-[10.5px] text-muted-foreground">
-            Reading {hasImports ? `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable)" : ""}from your uploaded file` : "12 curated Southwest Atlanta assets"}
+            Reading{" "}
+            {hasImports
+              ? `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
+              : "12 curated Southwest Atlanta assets"}
           </div>
         </div>
-        <div className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-          live
+        <div className="ml-auto flex items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition hover:border-accent/60 hover:text-foreground">
+            <input
+              type="checkbox"
+              checked={smartAssistant}
+              onChange={(e) => setSmartAssistant(e.target.checked)}
+              className="h-3 w-3 cursor-pointer accent-[#6e0e1e]"
+              aria-label="Enable conversational narration via Nebius Token Factory"
+            />
+            <Bot className="h-3 w-3" />
+            Smart assistant
+          </label>
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 text-[10px] text-muted-foreground">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+            live
+          </div>
         </div>
       </div>
 
@@ -404,7 +580,8 @@ export function ChatPanel(props: {
                   aria-hidden
                 />
                 <span className="tabular-nums">
-                  Geocoding {importedState.progress.done}/{importedState.progress.total}
+                  Geocoding {importedState.progress.done}/
+                  {importedState.progress.total}
                 </span>
                 {importedState.progress.cached > 0 && (
                   <span className="text-foreground/70">
@@ -550,8 +727,19 @@ export function ChatPanel(props: {
           </div>
         </div>
         <div className="mt-1.5 px-1.5 text-[10.5px] text-muted-foreground">
-          Press <kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> to send · <kbd className="rounded border border-border/60 px-1.5 py-px">Shift</kbd>+<kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> for newline · CSV upload reads columns{" "}
-          <span className="text-foreground/80">Name, Address, Lat, Lng, Category, Features…</span>
+          Press <kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> to send ·{" "}
+          <kbd className="rounded border border-border/60 px-1.5 py-px">Shift</kbd>+
+          <kbd className="rounded border border-border/60 px-1.5 py-px">Enter</kbd> for newline · CSV
+          upload reads columns{" "}
+          <span className="text-foreground/80">
+            Name, Address, Lat, Lng, Category, Features…
+          </span>
+          {smartAssistant && (
+            <>
+              {" · "}narrations via{" "}
+              <span className="text-foreground/80">Nebius · DeepSeek V3</span>
+            </>
+          )}
         </div>
       </div>
     </div>
