@@ -73,17 +73,38 @@ type ProviderConfig = {
 const GEMINI_DEFAULT_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
+/** Accepted env-var names for the Gemini API key, in priority order.
+ *  We try a few common conventions because users paste the key under
+ *  different names depending on which docs page they followed. */
+const GEMINI_KEY_ENV_NAMES = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GEMINI_API_KEY",
+  "GEMINI_KEY",
+] as const;
+
+function readGeminiKey(): { key: string | null; envName: string | null } {
+  for (const name of GEMINI_KEY_ENV_NAMES) {
+    const v = process.env[name];
+    if (v && v.trim().length > 0) return { key: v.trim(), envName: name };
+  }
+  return { key: null, envName: null };
+}
+
 function resolveProvider(): {
   provider: ProviderName;
   cfg: ProviderConfig;
+  /** Every env-var name we tried to read for the active provider. */
+  triedEnvVars: string[];
 } {
   const provider = (process.env.LLM_PROVIDER ?? "gemini").toLowerCase() as
     | ProviderName;
   if (provider === "nebius") {
+    const nebiusKey = process.env.NEBIUS_API_KEY ?? null;
     return {
       provider,
       cfg: {
-        apiKey: process.env.NEBIUS_API_KEY ?? null,
+        apiKey: nebiusKey,
         model:
           process.env.NEBIUS_MODEL_ID ?? "deepseek-ai/DeepSeek-V3",
         baseUrl:
@@ -92,18 +113,21 @@ function resolveProvider(): {
         label: "Nebius · DeepSeek V3",
         keyEnv: "NEBIUS_API_KEY",
       },
+      triedEnvVars: ["NEBIUS_API_KEY"],
     };
   }
   // Default: Gemini native REST.
+  const { key, envName } = readGeminiKey();
   return {
     provider,
     cfg: {
-      apiKey: process.env.GEMINI_API_KEY ?? null,
+      apiKey: key,
       model: process.env.GEMINI_MODEL ?? "gemini-flash-latest",
       baseUrl: process.env.GEMINI_BASE_URL ?? GEMINI_DEFAULT_BASE,
       label: "Gemini · gemini-flash-latest",
-      keyEnv: "GEMINI_API_KEY",
+      keyEnv: envName ?? "GEMINI_API_KEY",
     },
+    triedEnvVars: [...GEMINI_KEY_ENV_NAMES],
   };
 }
 
@@ -248,8 +272,13 @@ async function callLLM(opts: {
 }): Promise<LLMResult> {
   const { provider, cfg } = resolveProvider();
   if (!cfg.apiKey) {
+    // List every name we tried so the user can spot the typo / misnamed
+    // entry in one read instead of going back and forth.
+    const triedList = GEMINI_KEY_ENV_NAMES.join(", ");
     return {
-      error: `Atlas Assistant is offline — add ${cfg.keyEnv} in the project's Keys/API keys tab to enable conversational answers.`,
+      error:
+        `Atlas Assistant is offline — add one of [${triedList}] ` +
+        `in the project's Keys/API keys tab to enable conversational answers.`,
     };
   }
 
@@ -279,6 +308,28 @@ async function callLLM(opts: {
 export async function activeProviderLabel(): Promise<string | null> {
   const { cfg } = resolveProvider();
   return cfg.apiKey ? cfg.label : null;
+}
+
+/** Debug helper — returns the live provider config so the UI can show
+ *  the user which env-var name is actually visible to the Convex runtime.
+ *  Exposes NO secret material — just booleans + names. */
+export async function providerStatus(): Promise<{
+  provider: "gemini" | "nebius";
+  configured: boolean;
+  activeEnvName: string | null;
+  triedEnvVars: string[];
+  label: string;
+  model: string;
+}> {
+  const { provider, cfg, triedEnvVars } = resolveProvider();
+  return {
+    provider,
+    configured: !!cfg.apiKey,
+    activeEnvName: cfg.apiKey ? cfg.keyEnv : null,
+    triedEnvVars,
+    label: cfg.label,
+    model: cfg.model,
+  };
 }
 
 export const chatComplete = action({
