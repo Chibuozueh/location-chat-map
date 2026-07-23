@@ -146,6 +146,22 @@ type CallOpts = {
   maxOutputTokens?: number;
 };
 
+/**
+ * Pull a human-friendly wait hint out of an upstream 429 / 503 response.
+ * Returns a phrase like " (Retry-After: 30s)" when the upstream tells us,
+ * otherwise a generic " (free-tier rate limit)".
+ */
+function rateLimitHint(res: Response, label: string): string {
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter) {
+    const n = Number(retryAfter);
+    if (!Number.isNaN(n) && n > 0) {
+      return `${label} rate-limited — wait ~${n}s, then retry.`;
+    }
+  }
+  return `${label} rate-limited (free-tier cap). Wait a minute, then retry.`;
+}
+
 async function callGemini(
   cfg: ProviderConfig,
   opts: CallOpts,
@@ -175,10 +191,19 @@ async function callGemini(
         `[chatComplete] ${cfg.label} ${res.status}: ${detail.slice(0, 300)}`,
       );
       const isAuth = res.status === 401 || res.status === 403;
+      const isRateLimit = res.status === 429 || res.status === 503;
+      if (isAuth) {
+        return {
+          error: `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`,
+        };
+      }
+      if (isRateLimit) {
+        return {
+          error: `Atlas Assistant is offline — ${rateLimitHint(res, "Gemini")}`,
+        };
+      }
       return {
-        error: isAuth
-          ? `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`
-          : `Atlas Assistant is offline — upstream returned ${res.status}.`,
+        error: `Atlas Assistant is offline — upstream returned ${res.status}.`,
       };
     }
     const data = (await res.json()) as {
@@ -232,10 +257,19 @@ async function callNebius(
         `[chatComplete] ${cfg.label} ${res.status}: ${detail.slice(0, 300)}`,
       );
       const isAuth = res.status === 401 || res.status === 403;
+      const isRateLimit = res.status === 429 || res.status === 503;
+      if (isAuth) {
+        return {
+          error: `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`,
+        };
+      }
+      if (isRateLimit) {
+        return {
+          error: `Atlas Assistant is offline — ${rateLimitHint(res, "Nebius")}`,
+        };
+      }
       return {
-        error: isAuth
-          ? `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`
-          : `Atlas Assistant is offline — upstream returned ${res.status}.`,
+        error: `Atlas Assistant is offline — upstream returned ${res.status}.`,
       };
     }
     const data = (await res.json()) as {
