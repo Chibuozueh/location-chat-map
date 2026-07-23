@@ -12,7 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { toast } from "sonner";
 import {
   type AddressFragment,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/csv-import";
 import type { LocationDoc } from "@/components/atlas/types";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 
 export type GeocodeProgress = {
   total: number; // pending at start of pass
@@ -105,7 +106,27 @@ const EMPTY: ImportedState = {
  *  everything in `public/` from the project root, so these resolve to
  *  `/data/atlas.csv` etc. The first one that returns 200 OK wins. */
 const NATIVE_CSV_PATHS = ["/data/atlas.csv", "/data/assets.csv"] as const;
-const NATIVE_CACHE_KEY = "atlas.nativeCsv.v1";
+
+/**
+ * Storage id for the project-uploaded reference CSV. The user pastes the
+ * file into the project's data tab (Convex storage) and gets back an id;
+ * we resolve that id to a signed URL via `api.nativeCsv.getUrl` and the
+ * browser fetches the file directly. Override this constant when the
+ * reference spreadsheet is re-uploaded, or set `VITE_NATIVE_CSV_STORAGE_ID`
+ * in the Freebuff keys panel to swap without a code change.
+ */
+const NATIVE_CSV_STORAGE_ID =
+  (typeof import.meta.env?.VITE_NATIVE_CSV_STORAGE_ID === "string"
+    ? (import.meta.env.VITE_NATIVE_CSV_STORAGE_ID as string)
+    : "csk-rt46v4nwck69hx6k6jkvdmf86kp69k6tnrj5hykwpmf8ne43");
+
+/**
+ * localStorage key for the cached native CSV. The storage id is baked
+ * into the key so re-uploading the reference file (which produces a new
+ * id) automatically invalidates any older cache without an explicit
+ * clear().
+ */
+const NATIVE_CACHE_KEY = `atlas.nativeCsv.v2.${NATIVE_CSV_STORAGE_ID}`;
 
 type ImportedContextValue = {
   state: ImportedState;
@@ -283,14 +304,54 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Probe the canonical native CSV paths and return the first one that
-   * returns 200 OK with non-empty content. Returns null when none exist
-   * (the project simply has no reference file in `public/data/`).
+   * Resolve the project's Convex-storage reference CSV into a public signed
+   * URL. Result is `string` when the file exists, `null` when it was
+   * removed, and `undefined` while the query is still loading.
+   */
+  const nativeStorageUrl = useQuery(
+    api.nativeCsv.getUrl,
+    { storageId: NATIVE_CSV_STORAGE_ID as Id<"_storage"> },
+  );
+
+  /**
+   * Probe the canonical native CSV sources and return the first one with
+   * non-empty content. Order:
+   *   1. Convex storage (project data-panel upload) — preferred source.
+   *   2. Static `/data/atlas.csv` then `/data/assets.csv` (Vite serves
+   *      anything under `public/` from the project root).
+   * Returns null when no source has a usable file.
+   *
+   * If the storage file is removed (e.g. the user cleared the data tab)
+   * the cache entry is evicted so the next session shows the fallback or
+   * the curated defaults rather than the orphaned snapshot.
    */
   const fetchNativeCsv = useCallback(async (): Promise<{
     text: string;
     filename: string;
   } | null> => {
+    // 1. Convex storage
+    if (nativeStorageUrl) {
+      try {
+        const res = await fetch(nativeStorageUrl, { cache: "no-store" });
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.trim()) {
+            return { text, filename: "atlas.csv" };
+          }
+        } else if (res.status === 404) {
+          try {
+            window.localStorage.removeItem(NATIVE_CACHE_KEY);
+          } catch {
+            /* ignore */
+          }
+        } else {
+          console.warn("[nativeCsv] storage fetch non-ok:", res.status);
+        }
+      } catch (err) {
+        console.warn("[nativeCsv] storage fetch threw", err);
+      }
+    }
+    // 2. Static files under /data
     for (const path of NATIVE_CSV_PATHS) {
       try {
         const res = await fetch(path, { cache: "no-store" });
@@ -304,7 +365,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       }
     }
     return null;
-  }, []);
+  }, [nativeStorageUrl]);
 
   /**
    * Hydrate from `localStorage` so the atlas appears instantly on
