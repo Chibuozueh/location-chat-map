@@ -8,7 +8,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
+import { AtSign, Globe, Mail, Phone, X } from "lucide-react";
 import {
   CATEGORY_LABEL,
   FEATURE_LABEL,
@@ -42,6 +42,20 @@ function makePinIcon(selected: boolean, accent: string, name: string) {
 
 function escapeHtml(s: string): string {
   return s.replace(/[<>&\"]/g, "");
+}
+
+/** Prefix https:// to bare hostnames so <a href> resolves correctly. */
+function normalizeUrl(s: string): string {
+  const t = s.trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^www\./i.test(t)) return `https://${t}`;
+  return `https://${t}`;
+}
+
+/** Keep only digits + # * + so tel: links are well-formed. */
+function sanitizePhone(s: string): string {
+  return s.replace(/[^0-9+#*]/g, "");
 }
 
 function FlyTo({
@@ -169,6 +183,62 @@ function DescriptionCard({
             </span>
           )}
         </div>
+        {(loc.website ||
+          loc.socialMedia ||
+          loc.contactName ||
+          loc.contactPhone ||
+          loc.contactEmail) && (
+          <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-[#6e0e1e1f] pt-2.5">
+            {loc.contactName && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
+                <AtSign className="h-3 w-3 text-[#6e0e1e]" />
+                <span className="truncate max-w-[120px]">{loc.contactName}</span>
+              </span>
+            )}
+            {loc.website && (
+              <a
+                href={normalizeUrl(loc.website)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+              >
+                <Globe className="h-3 w-3" />
+                Website
+              </a>
+            )}
+            {loc.socialMedia && (
+              <a
+                href={normalizeUrl(loc.socialMedia)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+              >
+                <AtSign className="h-3 w-3 text-[#6e0e1e]" />
+                Social
+              </a>
+            )}
+            {loc.contactPhone && (
+              <a
+                href={`tel:${sanitizePhone(loc.contactPhone)}`}
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+              >
+                <Phone className="h-3 w-3 text-[#6e0e1e]" />
+                <span className="tabular-nums truncate max-w-[110px]">
+                  {loc.contactPhone}
+                </span>
+              </a>
+            )}
+            {loc.contactEmail && (
+              <a
+                href={`mailto:${loc.contactEmail}`}
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+              >
+                <Mail className="h-3 w-3 text-[#6e0e1e]" />
+                Email
+              </a>
+            )}
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className="rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-[#6e0e1e]">
             ★ {loc.rating.toFixed(1)}

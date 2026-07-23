@@ -1,6 +1,18 @@
 import type { Doc } from "@/convex/_generated/dataModel";
 
-export type LocationDoc = Doc<"locations">;
+export type LocationDoc = Doc<"locations"> & {
+  /**
+   * Optional contact / outreach fields. These are populated by uploaded CSV
+   * rows (see AtlasAsset) and may be `undefined` on the seeded default
+   * rows. Kept on LocationDoc so LocationCard + MapView can read them off
+   * either the seeded or imported asset without conditional casts.
+   */
+  website?: string;
+  socialMedia?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+};
 
 export const PRICE_SYMBOL: Record<number, string> = {
   0: "Free",

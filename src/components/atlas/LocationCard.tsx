@@ -2,12 +2,15 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Accessibility,
+  AtSign,
   Bath,
   CalendarDays,
   Clock,
   Globe,
   Heart,
+  Mail,
   MapPin,
+  Phone,
   Sparkles,
   Star,
   TramFront,
@@ -37,6 +40,20 @@ const FEATURE_ICONS: Record<string, React.ComponentType<{ className?: string }>>
 
 function dayLabel(i: number): string {
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i];
+}
+
+/** Prefix https:// to bare hostnames so <a href> resolves correctly. */
+function normalizeUrl(s: string): string {
+  const t = s.trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^www\./i.test(t)) return `https://${t}`;
+  return `https://${t}`;
+}
+
+/** Pretty-print a phone for display while keeping tel: clean. */
+function sanitizePhone(s: string): string {
+  return s.replace(/[^0-9+#*]/g, "");
 }
 
 function isCurrentlyOpen(loc: LocationDoc, now = new Date()): boolean {
@@ -181,6 +198,61 @@ export function LocationCard(props: {
               {loc.city}, {loc.state} {loc.postalCode}
             </span>
           </div>
+          {/* Contact strip — only renders when at least one is populated. */}
+          {(loc.contactName ||
+            loc.website ||
+            loc.socialMedia ||
+            loc.contactPhone ||
+            loc.contactEmail) && (
+            <div className="flex flex-wrap gap-1.5">
+              {loc.contactName && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/40 px-2.5 py-1 text-[11.5px] text-secondary-foreground">
+                  <Users className="h-3 w-3 text-accent" />
+                  {loc.contactName}
+                </span>
+              )}
+              {loc.website && (
+                <a
+                  href={normalizeUrl(loc.website)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2.5 py-1 text-[11.5px] font-medium text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f]"
+                >
+                  <Globe className="h-3 w-3" />
+                  Website
+                </a>
+              )}
+              {loc.socialMedia && (
+                <a
+                  href={normalizeUrl(loc.socialMedia)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/40 px-2.5 py-1 text-[11.5px] font-medium text-secondary-foreground transition hover:border-accent/60 hover:bg-accent/10"
+                >
+                  <AtSign className="h-3 w-3 text-accent" />
+                  Social
+                </a>
+              )}
+              {loc.contactPhone && (
+                <a
+                  href={`tel:${sanitizePhone(loc.contactPhone)}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/40 px-2.5 py-1 text-[11.5px] font-medium text-secondary-foreground transition hover:border-accent/60 hover:bg-accent/10"
+                >
+                  <Phone className="h-3 w-3 text-accent" />
+                  {loc.contactPhone}
+                </a>
+              )}
+              {loc.contactEmail && (
+                <a
+                  href={`mailto:${loc.contactEmail}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/40 px-2.5 py-1 text-[11.5px] font-medium text-secondary-foreground transition hover:border-accent/60 hover:bg-accent/10"
+                >
+                  <Mail className="h-3 w-3 text-accent" />
+                  Email
+                </a>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 text-[12px]">
             <div className="rounded-lg border border-border/60 bg-background/40 p-2.5">
               <div className="flex items-center gap-1.5 text-muted-foreground">

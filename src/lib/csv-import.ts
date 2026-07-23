@@ -57,6 +57,16 @@ export type AtlasAsset = {
   ownerName?: string;
   imageUrl?: string;
   accentColor?: string;
+  /** Public website URL (https://...). Falls back to imageUrl when absent. */
+  website?: string;
+  /** Social media handle or URL — Facebook, Instagram, LinkedIn, etc. */
+  socialMedia?: string;
+  /** Direct contact line ("Jane Doe, Program Director"). */
+  contactName?: string;
+  /** Click-to-call phone number. */
+  contactPhone?: string;
+  /** Click-to-mail email address. */
+  contactEmail?: string;
   /** True iff this row lacks lat/lng and needs geocoding before mapping. */
   needsGeocode?: boolean;
   /** Cache key for client-side de-duplication. */
@@ -161,6 +171,16 @@ const ALIASES: Record<string, string[]> = {
     "assetname",
     "asset_name",
     "asset_title",
+    // The user's HUD sheet puts name + organization in one header.
+    "asset_name_or_organization",
+    "assetnameororganization",
+    "asset_or_organization",
+    "assettitle",
+    "asset_and_org",
+    "name_or_organization",
+    "nameororganization",
+    "name_and_organization",
+    "nameandorganization",
     "programtitle",
     "program_title",
     "venue",
@@ -295,6 +315,10 @@ const ALIASES: Record<string, string[]> = {
     "service_resources",
     "service_resources_available",
     "service_resources_description",
+    "services_resources",
+    "services_resources_available",
+    "servicesresourcesavailable",
+    "services_resources_description",
     "resources_available",
     "resources",
     "resource_available",
@@ -373,6 +397,98 @@ const ALIASES: Record<string, string[]> = {
     "postal_code",
     "postalcode",
     "postcode",
+  ],
+
+  website: [
+    "website",
+    "url",
+    "web",
+    "homepage",
+    "site_url",
+    "siteurl",
+    "web_site",
+    "websitelink",
+    "website_url",
+    "link",
+    "online",
+    "internet",
+    "webpage",
+    "home_page",
+  ],
+
+  socialMedia: [
+    "social",
+    "social_media",
+    "socialmedia",
+    "facebook",
+    "instagram",
+    "twitter",
+    "linkedin",
+    "fb",
+    "tiktok",
+    "youtube",
+    "socialhandle",
+    "social_handle",
+    "social_url",
+    "socialurl",
+    "sm",
+    "facebook_url",
+    "instagram_url",
+    "twitter_url",
+    "linkedin_url",
+    "tiktok_url",
+    "youtube_url",
+  ],
+
+  contactName: [
+    "key_contact",
+    "keycontact",
+    "contact_name",
+    "contactname",
+    "contact",
+    "primary_contact",
+    "primarycontact",
+    "point_of_contact",
+    "pointofcontact",
+    "rep",
+    "representative",
+  ],
+
+  contactPhone: [
+    "phone",
+    "contact_phone",
+    "contactphone",
+    "telephone",
+    "tel",
+    "phonenumber",
+    "phone_number",
+    "phonenumber",
+    "mobile",
+    "cell",
+    "contact_mobile",
+    "contactmobile",
+    "cellphone",
+    "cell_phone",
+    "telephone_number",
+    "direct_line",
+    "directline",
+    "office_phone",
+    "officephone",
+    "phonenumbercontact",
+  ],
+
+  contactEmail: [
+    "email",
+    "contact_email",
+    "contactemail",
+    "mailto",
+    "e_mail",
+    "email_address",
+    "emailaddress",
+    "contact_e_mail",
+    "contactemailaddress",
+    "contactaddress",
+    "mail",
   ],
 
   lat: ["lat", "latitude", "y", "y_lat", "coord_lat"],
@@ -857,6 +973,11 @@ export function importCsv(
       ownerName: get("ownerName") || undefined,
       imageUrl: get("imageUrl") || undefined,
       accentColor: get("accentColor") || undefined,
+      website: get("website") || undefined,
+      socialMedia: get("socialMedia") || undefined,
+      contactName: get("contactName") || undefined,
+      contactPhone: get("contactPhone") || undefined,
+      contactEmail: get("contactEmail") || undefined,
     };
 
     const row: ImportedRow = { doc, warnings };
