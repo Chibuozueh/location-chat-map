@@ -269,9 +269,14 @@ function LandingInner() {
           </section>
 
           {/* Right: chat panel — collapses out of view when the user
-              requests the focused-map mode so the map can fill the row. */}
+              requests the focused-map mode so the map can fill the row.
+              Sized to the viewport so typing never requires scrolling the
+              page; the inner messages area scrolls independently. */}
           {!mapFocus && (
-            <aside className="flex min-h-[560px] flex-col">
+            <aside
+              className="sticky top-20 flex max-h-[calc(100dvh-6rem)] min-h-[520px] flex-col"
+              style={{ height: "calc(100dvh - 6rem)" }}
+            >
               <ChatPanel onCitation={(slug) => setSelected(slug)} />
             </aside>
           )}

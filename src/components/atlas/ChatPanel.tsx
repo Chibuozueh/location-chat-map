@@ -693,9 +693,11 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
         </div>
       </div>
 
-      {/* input + import */}
-      <div className="border-t border-border/60 p-3">
-        <div className="flex items-center gap-2">
+      {/* input + import — stays anchored at the bottom; the textarea is
+          height-capped so long lines scroll internally instead of pushing
+          the panel out of the viewport. */}
+      <div className="shrink-0 border-t border-border/60 p-3">
+        <div className="flex items-end gap-2">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -717,7 +719,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             className="hidden"
             onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
           />
-          <div className="relative flex flex-1 items-end gap-2 rounded-xl border border-border/70 bg-background/60 p-1.5 shadow-card focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-ring/30">
+          <div className="relative flex max-h-[140px] flex-1 items-end gap-2 overflow-y-auto rounded-xl border border-border/70 bg-background/60 p-1.5 shadow-card focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-ring/30">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -728,12 +730,13 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                   : "Ask about categories, hours, accessibility, cost…"
               }
               rows={1}
-              className="min-h-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[13.5px] shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="min-h-0 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[13.5px] leading-snug shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              style={{ fieldSizing: "fixed", maxHeight: "120px" } as React.CSSProperties}
             />
             <button
               onClick={() => submit(input)}
               disabled={!input.trim()}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center self-end rounded-lg bg-primary text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
               aria-label="Send message"
             >
               <ArrowUp className="h-4 w-4" />
