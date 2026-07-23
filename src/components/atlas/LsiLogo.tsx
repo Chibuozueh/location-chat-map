@@ -1,51 +1,41 @@
 import { cn } from "@/lib/utils";
 
 /**
- * LSI × Lewis Scholars Imhotep Project partnership lockup.
+ * LSI × Lewis Scholars Imhotep Project partnership wordmark.
  *
- * Three stacked layers make up the mark:
- *   - Gilded yellow sun-burst + arms-raised stickman (figure)
- *   - Crimson red banner with notched ends (ribbon)
- *   - Black marquee block (theatrical-sign silhouette)
+ * Renders only the 3-line typographic lockup:
+ *   "Morehouse College" (small, gray uppercase tracking) — optional
+ *   "Lewis Scholars"     (medium, bold display serif, maroon)
+ *   "Imhotep Project"    (small, gray uppercase tracking)
  *
- * The "LSI" type renders OUTSIDE the SVG so it can scale cleanly at any
- * size. The full partnership wordmark — "Morehouse College / Lewis
- * Scholars / Imhotep Project" — sits beside the figure in a typographic
- * lockup using the Atlanta Atlas display + sans fonts. When the lockup
- * sits beside the primary Morehouse app logo, pass `hideInstitution` to
- * drop the redundant "Morehouse College" line.
+ * The companion SVG mark (`LsiMark`) is retained below for future use
+ * (e.g. hero sections, partnership footers) but is no longer rendered
+ * inline beside the wordmark in the header.
  *
- * Colors pinned to:
- *   - Gilded yellow  → #F5C518  (figure / accent)
- *   - Crimson red    → #C8242E  (ribbon / banner)
- *   - Marquee black  → #111111  (sign silhouette / type)
+ * Colors:
  *   - Morehouse maroon → #6E0E1E (wordmark accent)
- *   - Parchment      → #FAF7F2  (outline / sign panel)
  */
 
 type LockupSize = "sm" | "md" | "lg";
 
 const containerBySize: Record<
   LockupSize,
-  { box: string; figure: number; college: string; scholars: string; project: string }
+  { box: string; college: string; scholars: string; project: string }
 > = {
   sm: {
-    box: "h-12",
-    figure: 38,
+    box: "h-10",
     college: "text-[10px]",
     scholars: "text-[14px]",
     project: "text-[11px]",
   },
   md: {
-    box: "h-16",
-    figure: 54,
+    box: "h-14",
     college: "text-[11px]",
     scholars: "text-[15px]",
     project: "text-[11.5px]",
   },
   lg: {
-    box: "h-20",
-    figure: 72,
+    box: "h-18",
     college: "text-[12px]",
     scholars: "text-[18px]",
     project: "text-[12.5px]",
@@ -60,7 +50,7 @@ export function LsiMark({
   className?: string;
 }) {
   // viewBox 120 wide × 140 tall so the vertical composable reads cleanly
-  // from chip-sizes up to large-format lockups.
+  // from chip-sizes up to large-format lockups. Kept for future use.
   return (
     <svg
       viewBox="0 0 120 140"
@@ -118,9 +108,7 @@ export function LsiMark({
       {/* Head — solid yellow circle, outlined in black. */}
       <circle cx="60" cy="28" r="9" fill="#F5C518" stroke="#111111" strokeWidth="1.6" />
 
-      {/* Stickman body — black underlay gives the figure its silhouette on
-          light card backgrounds, then the gilded yellow stroke is layered
-          on top with paintOrder="stroke" so colors stay vivid. */}
+      {/* Stickman body — black underlay + yellow overlay. */}
       <g
         stroke="#111111"
         strokeWidth="6.6"
@@ -151,14 +139,12 @@ export function LsiMark({
 
       {/* Crimson ribbon banner with notched ends. */}
       <g>
-        {/* Subtle drop-shadow strip for depth. */}
         <polygon
           points="14,96 22,86 106,90 98,100 106,110 22,114 14,104"
           fill="#7A1218"
           opacity="0.55"
           transform="translate(0,2)"
         />
-        {/* Main ribbon body. */}
         <polygon
           points="18,92 26,82 102,86 94,98 102,110 26,114 18,104"
           fill="#C8242E"
@@ -166,7 +152,6 @@ export function LsiMark({
           strokeWidth="1.4"
           strokeLinejoin="round"
         />
-        {/* Center ribbon diamond accent. */}
         <polygon
           points="56,86 64,98 56,110 48,98"
           fill="#A31C26"
@@ -174,8 +159,7 @@ export function LsiMark({
         />
       </g>
 
-      {/* Marquee block — bold black rounded rect. Type is rendered in the
-          React wordmark beside the SVG so it can scale to any size. */}
+      {/* Marquee block — bold black rounded rect. */}
       <g>
         <rect
           x="22"
@@ -187,7 +171,6 @@ export function LsiMark({
           stroke="#F5C518"
           strokeWidth="1.6"
         />
-        {/* Pinstripe ribbing at the base. */}
         <rect x="22" y="131" width="76" height="3" fill="#F5C518" />
       </g>
     </svg>
@@ -216,7 +199,6 @@ export function LsiLogo({
         className,
       )}
     >
-      <LsiMark size={cfg.figure} className="-mt-0.5" />
       {withWordmark && (
         <div className="flex flex-col leading-none">
           {!hideInstitution && (
