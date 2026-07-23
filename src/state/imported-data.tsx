@@ -343,6 +343,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * through to the static `/data/*.csv` chain and toasts the user. The
    * query stays disabled when there's no reference at all, so a fresh
    * install doesn't burn a Convex round-trip.
+   *
+   * NOTE: this query is intentionally about the native CSV's URL, NOT
+   * about which provider answers the chat. The map's AI normalizer
+   * (callAddressNormalizer in convex/chatComplete.ts) uses MAP_CHAT_KEY
+   * independently and never touches the chat Gemini key — so a noisy
+   * CSV import can't starve the conversational chat.
    */
   const nativeStorageUrl = useQuery(
     api.nativeCsv.getUrl,
@@ -744,6 +750,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 normalizeCacheRef.current.set(cleanCacheKey, {
                   ok: false,
                 });
+                // Surface the MapChat key state in the chip so the user
+                // can tell at a glance whether the dedicated map key was
+                // configured but rate-limited, or simply not set.
+                if (/MapChat.*offline|MAP_CHAT_KEY/i.test(clean.error)) {
+                  lastProviderLabel = "MapChat · offline";
+                }
               } else {
                 llmOutcome = "skipped";
                 normalizeCacheRef.current.set(cleanCacheKey, {

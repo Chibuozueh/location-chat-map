@@ -445,22 +445,26 @@ function buildMapChatConfig(): ProviderConfig | null {
 }
 
 /**
- * Wrapper used by `normalizeAddress` (the map-side pre-parser). The flow:
+ * Wrapper used by `normalizeAddress` (the map-side pre-parser). This is
+ * STRICTLY scoped to the dedicated `MAP_CHAT_KEY` (and its aliases). It
+ * deliberately never falls through to the chat chain's gemini / nebius
+ * list — the chat runs on a separate Gemini key and a single noisy CSV
+ * import must not starve the conversational assistant.
  *
- *   1. If `MAP_CHAT_KEY` (or any of the MAP_KEY_ENV_NAMES aliases) is set,
- *      call the Gemini transport with that key. The dedicated quota
- *      protects the conversational chat from being starved by a noisy CSV
- *      upload.
- *   2. On a RECOVERABLE upstream error from the map key (429 / 503 /
- *      network / abort), fall through to `callLLM` (the chat's
- *      gemini-first chain) so a single busted key can't lock the
- *      geocoder.
- *   3. On a NON-RECOVERABLE error (401 / 403 / 400), stop immediately —
- *      switching providers won't fix an auth or bad-input problem, and
- *      this key is dedicated, so the chat chain isn't a meaningful
- *      fallback anyway.
- *
- * When no map key is configured at all, behaves exactly like `callLLM`.
+ * Behavior:
+ *   1. If `MAP_CHAT_KEY` (or any MAP_KEY_ENV_NAMES alias) is configured,
+ *      call the Gemini transport with that key. Returns the cleaned
+ *      fragment when it succeeds.
+ *   2. If the MapChat key returns a recoverable OR non-recoverable
+ *      upstream error (429 / 503 / network / 401 / 403 / 400), return
+ *      the error. The caller treats this as `ok=false` and the row
+ *      falls back to the deterministic geocode cascade with the raw
+ *      address — which may still succeed if the upstream CSV already
+ *      looked canonical.
+ *   3. If no MapChat key is configured at all, return a clear "set
+ *      MAP_CHAT_KEY" hint so the user knows the map is bypassing AI
+ *      normalization entirely. The row still goes through the
+ *      deterministic cascade.
  */
 async function callAddressNormalizer(opts: {
   system: string;
@@ -469,43 +473,35 @@ async function callAddressNormalizer(opts: {
   temperature?: number;
 }): Promise<LLMResult> {
   const mapCfg = buildMapChatConfig();
-  if (mapCfg) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000);
-    try {
-      const result = await callGemini(mapCfg, {
-        system: opts.system,
-        user: opts.user,
-        signal: controller.signal,
-        temperature: opts.temperature,
-        maxOutputTokens: opts.maxOutputTokens,
-      });
-      if (!result.error) {
-        return { ...result, providerLabel: mapCfg.label };
-      }
-      const e = result.error;
-      const nonRecoverable =
-        /was rejected by/.test(e) ||
-        /wasn't 2 letters|wasn't 5 digits|returned 4\d\d|returned 400\b/i.test(
-          e,
-        );
-      console.warn(
-        `[mapNormalizer] MapChat failed (${nonRecoverable ? "non-recoverable" : "recoverable"}): ${e}`,
-      );
-      if (nonRecoverable) {
-        // Don't burn the chat chain on something a different key can't fix.
-        return result;
-      }
-      // else: recoverable — fall through to the chat chain.
-    } finally {
-      clearTimeout(timeout);
-    }
+  if (!mapCfg) {
+    return {
+      error:
+        "MapChat AI offline — add MAP_CHAT_KEY in the project's Keys/API keys tab to enable AI address normalization.",
+    };
   }
-  // No map key set, OR map key failed recoverably — use the chat chain
-  // (gemini → nebius). Note: this is the SAME chain that powers the
-  // chat narrative, so on a fresh install with only `GEMINI_API_KEY` set
-  // the normalizer degrades to "the chat's Gemini key is shared".
-  return await callLLM(opts);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const result = await callGemini(mapCfg, {
+      system: opts.system,
+      user: opts.user,
+      signal: controller.signal,
+      temperature: opts.temperature,
+      maxOutputTokens: opts.maxOutputTokens,
+    });
+    if (!result.error) {
+      return { ...result, providerLabel: mapCfg.label };
+    }
+    // Any error (recoverable OR non-recoverable) is returned directly.
+    // We intentionally never fall through to callLLM here — the chat
+    // Gemini key is reserved for the conversational assistant.
+    console.warn(
+      `[mapNormalizer] MapChat failed (returning ok=false to caller, NOT touching the chat Gemini key): ${result.error}`,
+    );
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Read-only helper used elsewhere if we want to surface the provider label
