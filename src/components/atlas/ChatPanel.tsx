@@ -27,12 +27,12 @@ import { useImportedData, mergeAssets } from "@/state/imported-data";
 import type { AtlasAsset } from "@/lib/csv-import";
 
 const SUGGESTIONS = [
-  "Which asset has the highest community score?",
-  "Where can I find a free library open today?",
-  "Show me transit-accessible clinics",
-  "Tell me about Wren's Nest",
-  "What about recreation centers?",
-  "Wheelchair-accessible park with restrooms",
+  "What programs does Hills 4 ATL offer?",
+  "Where is the Walk with a Doc event?",
+  "Tell me about the ATL Beltline Rhythm Roll",
+  "Which programs are free on the Beltline?",
+  "What youth programs are available?",
+  "Where can I find fitness classes near Westside?",
 ];
 
 function newId() {
