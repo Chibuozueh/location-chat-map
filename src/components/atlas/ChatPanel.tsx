@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp,
   Bot,
+  Database,
   FileSpreadsheet,
   Loader2,
   MapPin,
@@ -515,7 +516,9 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
           <div className="text-[10.5px] text-muted-foreground">
             Reading{" "}
             {hasImports
-              ? `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
+              ? importedState.source === "native"
+                ? `${merged.mappable.length + merged.chatOnly.length} from public/data/${importedState.filename ?? "atlas.csv"}`
+                : `${merged.mappable.length + merged.chatOnly.length} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
               : "12 curated Southwest Atlanta assets"}
           </div>
         </div>
@@ -548,8 +551,13 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             className="mx-3 mt-3 flex flex-col gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
           >
             <div className="flex items-center gap-2 text-accent-foreground">
-              <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
+              {importedState.source === "native" ? (
+                <Database className="h-3.5 w-3.5 text-accent" />
+              ) : (
+                <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
+              )}
               <span className="truncate font-medium text-foreground">
+                {importedState.source === "native" ? "public/data/" : ""}
                 {importedState.filename}
               </span>
               <span className="text-muted-foreground">

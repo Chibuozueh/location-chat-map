@@ -58,6 +58,10 @@ type ImportedState = {
   totalParsed: number;
   rejected: number;
   progress: GeocodeProgress;
+  /** Where the imported data originally came from. Drives the header chip
+   *  so the user knows if the atlas is showing a manually-uploaded CSV
+   *  vs. a static reference file shipped in `public/data/`. */
+  source: "native" | "upload" | null;
 };
 
 const EMPTY_PROGRESS: GeocodeProgress = {
@@ -85,7 +89,14 @@ const EMPTY: ImportedState = {
   totalParsed: 0,
   rejected: 0,
   progress: EMPTY_PROGRESS,
+  source: null,
 };
+
+/** Filenames probed (in order) for the native reference CSV. Vite serves
+ *  everything in `public/` from the project root, so these resolve to
+ *  `/data/atlas.csv` etc. The first one that returns 200 OK wins. */
+const NATIVE_CSV_PATHS = ["/data/atlas.csv", "/data/assets.csv"] as const;
+const NATIVE_CACHE_KEY = "atlas.nativeCsv.v1";
 
 type ImportedContextValue = {
   state: ImportedState;
@@ -145,14 +156,36 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     cancelRef.current.cancelled = false;
     try {
       const text = await file.text();
-      const summary = importCsv(text, file.name);
+      await importFromText(text, file.name, "upload");
+    } catch (err) {
+      console.error("CSV import error", err);
+      toast.error(
+        `Couldn't parse ${file.name}. Make sure it's a CSV or TSV file.`,
+      );
+    } finally {
+      setImporting(false);
+    }
+  }, []);
+
+  /**
+   * Import a CSV string into the provider. Shared by the file-picker flow
+   * and the native auto-loader so both paths reuse the same parser +
+   * state-update + toast logic.
+   */
+  const importFromText = useCallback(
+    async (
+      text: string,
+      filename: string,
+      source: "native" | "upload",
+    ): Promise<void> => {
+      const summary = importCsv(text, filename);
       const readyCount = summary.rows.length;
       const pendingCount = summary.pending.length;
       const chatOnlyCount = summary.chatOnly.length;
 
       if (!readyCount && !pendingCount && !chatOnlyCount) {
         toast.error(
-          `No valid rows in ${file.name}. Each row needs at least a Name.`,
+          `No valid rows in ${filename}. Each row needs at least a Name.`,
         );
         return;
       }
@@ -187,6 +220,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           failed: 0,
           active: pendingCount > 0,
         },
+        source,
       });
 
       const skipped = summary.rejected;
@@ -195,21 +229,76 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         pendingCount > 0 ? ` · geocoding ${pendingCount}` : "";
       const chatOnlyNote =
         chatOnlyCount > 0 ? ` · ${chatOnlyCount} address-only` : "";
+      const sourceLabel = source === "native" ? "public/data" : "your upload";
       toast.success(
-        `Showing only your uploaded data: ${placed} ${placed === 1 ? "row" : "rows"} from ${file.name}` +
+        `Showing only ${sourceLabel}: ${placed} ${placed === 1 ? "row" : "rows"} from ${filename}` +
           (skipped ? ` · ${skipped} skipped` : "") +
           chatOnlyNote +
           pendingNote,
       );
-    } catch (err) {
-      console.error("CSV import error", err);
-      toast.error(
-        `Couldn't parse ${file.name}. Make sure it's a CSV or TSV file.`,
-      );
-    } finally {
-      setImporting(false);
+    },
+    [],
+  );
+
+  /**
+   * Probe the canonical native CSV paths and return the first one that
+   * returns 200 OK with non-empty content. Returns null when none exist
+   * (the project simply has no reference file in `public/data/`).
+   */
+  const fetchNativeCsv = useCallback(async (): Promise<{
+    text: string;
+    filename: string;
+  } | null> => {
+    for (const path of NATIVE_CSV_PATHS) {
+      try {
+        const res = await fetch(path, { cache: "no-store" });
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (!text || !text.trim()) continue;
+        const filename = path.split("/").pop() || path;
+        return { text, filename };
+      } catch {
+        continue;
+      }
     }
+    return null;
   }, []);
+
+  /**
+   * Hydrate from `localStorage` so the atlas appears instantly on
+   * subsequent visits while the in-flight native fetch + parse runs in
+   * the background. If the cache is stale or missing, we silently fall
+   * through to the network fetch.
+   */
+  const hydrateFromCache = useCallback((): boolean => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = window.localStorage.getItem(NATIVE_CACHE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as {
+        text: string;
+        filename: string;
+        cachedAt: number;
+      };
+      if (!parsed?.text) return false;
+      // Fire-and-forget; setState inside importFromText handles UI.
+      void importFromText(parsed.text, parsed.filename, "native");
+      try {
+        window.localStorage.setItem(
+          NATIVE_CACHE_KEY,
+          JSON.stringify({
+            ...parsed,
+            cachedAt: Date.now(),
+          }),
+        );
+      } catch {
+        /* quota — ignore */
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }, [importFromText]);
 
   const clear = useCallback(() => {
     cancelRef.current.cancelled = true;
@@ -220,7 +309,61 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     });
     coordCacheRef.current.clear();
     normalizeCacheRef.current.clear();
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(NATIVE_CACHE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
   }, []);
+
+  /**
+   * Native auto-loader: on first mount, hydrate from localStorage
+   * (instant) and try to fetch a fresher copy from `public/data/`
+   * (background). User-uploaded files take precedence — we never
+   * overwrite an active user import.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // 1. Instant: paint from the local cache if we have one.
+      hydrateFromCache();
+
+      // 2. Background: probe the canonical native paths and refresh.
+      try {
+        const fetched = await fetchNativeCsv();
+        if (cancelled || !fetched) return;
+        // Don't clobber a manual upload the user just made.
+        setState((prev) => {
+          if (prev.source === "upload" && prev.rows.length > 0) return prev;
+          // Cache the raw text + filename so the next visit hydrates instantly.
+          if (typeof window !== "undefined") {
+            try {
+              window.localStorage.setItem(
+                NATIVE_CACHE_KEY,
+                JSON.stringify({
+                  text: fetched.text,
+                  filename: fetched.filename,
+                  cachedAt: Date.now(),
+                }),
+              );
+            } catch {
+              /* quota — ignore */
+            }
+          }
+          // Run through the shared import pipeline.
+          void importFromText(fetched.text, fetched.filename, "native");
+          return prev;
+        });
+      } catch (err) {
+        console.warn("[nativeCsv] fetch failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchNativeCsv, hydrateFromCache, importFromText]);
 
   // Re-run the cascade on every previously-failed row. We move the failed
   // entries back into pending, reset the failed counter, and bump
