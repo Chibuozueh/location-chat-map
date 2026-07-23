@@ -1,4 +1,5 @@
 import type { Doc } from "@/convex/_generated/dataModel";
+import type { AssetEvidence } from "@/lib/atlas-search";
 
 export type LocationDoc = Doc<"locations"> & {
   /**
@@ -57,6 +58,8 @@ export type ChatMessage = {
   pending?: boolean;
   /** Optional partial-match rubric surfaced from the search engine. */
   rubric?: { totalSignals: number; matchedSignals: number } | null;
+  /** Structured per-match evidence blocks (profile/list/snapshot view). */
+  evidence?: AssetEvidence[];
 };
 
 export type AtlasIntent = {
@@ -77,4 +80,19 @@ export type SearchResponse = {
   intent: AtlasIntent;
   matched: LocationDoc[];
   total: number;
+  /** Structured per-match evidence blocks parallel to `matched`. */
+  evidence?: {
+    slug: string;
+    name: string;
+    addressLine: string;
+    hoursToday: string;
+    contactLine: string | null;
+    websiteLine: string | null;
+    servicesLine: string | null;
+    priceLine: string;
+    ratingLine: string;
+    isOpenNow: boolean;
+  }[];
+  /** Which lead-template style was used (profile/list/snapshot/none). */
+  mode?: "profile" | "list" | "snapshot" | "none";
 };

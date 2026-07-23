@@ -31,6 +31,12 @@ export type SearchableAsset = {
   category: string;
   /** Short one-liner, e.g. "Clinic", "Faith-based food pantry". */
   tagline?: string;
+  /** Street address. */
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
   /** Long-form description / "Services / Resources Available". */
   description?: string;
   /** Internal notes — small extra loot from "Notes & Observations"
@@ -77,11 +83,43 @@ export type AtlasIntent = {
   matchedSignals: string[];
 };
 
+/** Structured per-asset evidence surfaced in the chat panel. Every field
+ *  is derived ONLY from the row's confirmed columns (no fabrication). */
+export type AssetEvidence = {
+  slug: string;
+  name: string;
+  category?: string;
+  tagline?: string;
+  /** Single-line address with city/state/zip joined. */
+  addressLine: string;
+  /** "Open now · until 5:00 PM" / "9:00 AM – 5:00 PM today" / "Closed today". */
+  hoursToday: string;
+  /** "📞 (404) 555-1234 · ✉️ jane@…" or just "📞 (404) ..." or null. */
+  contactLine: string | null;
+  /** "example.org" or null. */
+  websiteLine: string | null;
+  /** Top N service tags joined by comma, optionally with **bold** markup
+   *  around tags that match the user's intent filters. */
+  servicesLine: string | null;
+  /** "Free" / "Sliding-scale" / "Paid — $5 per visit". */
+  priceLine: string;
+  /** "4.8★ · 87 reviews". */
+  ratingLine: string;
+  isOpenNow: boolean;
+};
+
+/** v3 answer mode — picks what shape the bubble renders. */
+export type AnswerMode = "profile" | "list" | "snapshot" | "none";
+
 /** Minimal response shape returned to the chat panel. */
 export type SearchResponse = {
   answer: string;
   intent: AtlasIntent;
   matched: SearchableAsset[];
+  /** Structured per-match evidence blocks (parallel to `matched`). */
+  evidence: AssetEvidence[];
+  /** Which lead-template style was used. */
+  mode: AnswerMode;
   total: number;
   /** Truncated answer-friendly snippet snippets. */
   rubric: { totalSignals: number; matchedSignals: number } | null;
@@ -119,6 +157,113 @@ export function priceLabel(tier: number): string {
   if (tier <= 0) return "Free";
   if (tier === 1) return "Sliding-scale";
   return "Paid";
+}
+
+/** Pretty-print an open-or-close time on 12-hour clock. */
+function fmtClock(t: { h: number; m: number }): string {
+  const h = t.h % 12 || 12;
+  const m = t.m.toString().padStart(2, "0");
+  return `${h}:${m} ${t.h >= 12 ? "PM" : "AM"}`;
+}
+
+/** Human-readable line for today's open hours. Empty if unknown. */
+export function todayHoursLine(hours: HoursLike): string {
+  if (!hours) return "";
+  const key = dayKeys[new Date().getDay()];
+  const day = hours[key];
+  if (!day || !day.open) return "";
+  const trimmed = day.open.trim();
+  if (trimmed === "—" || trimmed === "-" || trimmed === "") return "Closed today";
+  const open = parseClock(day.open);
+  const close = parseClock(day.close);
+  if (!open || !close) return "Hours unavailable";
+
+  const now = new Date();
+  const cur = now.getHours() * 60 + now.getMinutes();
+  const openMin = open.h * 60 + open.m;
+  const closeMin = close.h * 60 + close.m;
+  if (cur >= openMin && cur < closeMin) {
+    return `Open now · until ${fmtClock(close)}`;
+  }
+  return `${fmtClock(open)} – ${fmtClock(close)} today`;
+}
+
+/** Build a structured evidence block for a single asset. Pure-function.
+ *  Intent hints are used to **bold** services tags that match the user's
+ *  query ("food pantry", "after-school") so the user sees what's relevant. */
+export function buildAssetEvidence(
+  m: SearchableAsset,
+  intentHints: string[] = [],
+): AssetEvidence {
+  const addressParts = [m.address, m.city, m.state, m.postalCode].filter(Boolean);
+  const addressLine = addressParts.join(", ");
+
+  const hoursToday = todayHoursLine(m.hours);
+
+  const contactLine = m.contactPhone
+    ? `\ud83d\udcde ${m.contactPhone}${m.contactEmail ? ` \u00b7 \u2709\ufe0f ${m.contactEmail}` : ""}`
+    : m.contactEmail
+      ? `\u2709\ufe0f ${m.contactEmail}`
+      : null;
+
+  let websiteLine: string | null = null;
+  if (m.website) {
+    websiteLine = m.website
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/$/, "");
+  }
+
+  const servicesArr = (m.services ?? []).filter(Boolean);
+  let servicesLine: string | null = null;
+  if (servicesArr.length) {
+    const hints = intentHints.filter((h) => h && h.length >= 3);
+    let bolded = false;
+    if (hints.length) {
+      const lower = servicesArr.map((s) => s.toLowerCase());
+      const any = lower.some((ls) => hints.some((h) => ls.includes(h.toLowerCase())));
+      if (any) {
+        bolded = true;
+        servicesLine = servicesArr
+          .slice(0, 6)
+          .map((s) => {
+            const ls = s.toLowerCase();
+            const hit = hints.find((h) => ls.includes(h.toLowerCase()));
+            return hit ? `**${s}**` : s;
+          })
+          .join(", ");
+      }
+    }
+    if (!bolded) servicesLine = servicesArr.slice(0, 6).join(", ");
+  }
+
+  const tierLabel = priceLabel(m.priceTier ?? 0);
+  const rawLower = (m.priceLabel ?? "").toLowerCase().trim();
+  const tierLower = tierLabel.toLowerCase();
+  const priceLine =
+    rawLower && rawLower !== tierLower && rawLower !== "free" && rawLower !== "sliding-scale"
+      ? `${tierLabel} \u2014 ${m.priceLabel}`
+      : tierLabel;
+
+  const ratingLine = m.rating
+    ? `${m.rating.toFixed(1)}\u2605 \u00b7 ${m.reviewCount ?? 0} review${
+        (m.reviewCount ?? 0) === 1 ? "" : "s"
+      }`
+    : "";
+
+  return {
+    slug: m.slug,
+    name: m.name,
+    category: m.category,
+    tagline: m.tagline,
+    addressLine,
+    hoursToday,
+    contactLine,
+    websiteLine,
+    servicesLine,
+    priceLine,
+    ratingLine,
+    isOpenNow: isOpenAt(m.hours),
+  };
 }
 
 function norm(s: string): string {
@@ -649,10 +794,37 @@ export function searchRows(
         }
       : null;
 
+  // Pick the answer mode: profile for a single specific match, list for
+  // multi-filter queries, snapshot for no-signal greetings.
+  const mode: AnswerMode = (() => {
+    if (!limited.length) return "none";
+    if (
+      intent.nameMention &&
+      limited.length === 1 &&
+      norm(limited[0].name).includes(intent.nameMention.toLowerCase())
+    ) {
+      return "profile";
+    }
+    if (intent.matchedSignals.length + (intent.nameMention ? 1 : 0) >= 1) {
+      return "list";
+    }
+    return "snapshot";
+  })();
+
+  const intentHints = [
+    ...intent.categories,
+    ...intent.features,
+    ...intent.serviceMentions,
+    intent.nameMention ?? "",
+  ].filter(Boolean);
+  const evidence = limited.map((m) => buildAssetEvidence(m, intentHints));
+
   return {
-    answer: composeAnswer(intent, limited, totalMatched, rubric),
+    answer: composeAnswer(intent, limited, totalMatched, rubric, mode),
     intent,
     matched: limited,
+    evidence,
+    mode,
     total: rows.length,
     rubric,
   };
@@ -667,50 +839,71 @@ export function composeAnswer(
   matched: SearchableAsset[],
   total: number,
   rubric: { matchedSignals: number; totalSignals: number } | null = null,
+  mode: AnswerMode = "list",
 ): string {
-  if (!intent.matchedSignals.length && !intent.nameMention) {
-    if (!matched.length) {
-      return `I don't see anything yet. Upload a spreadsheet of asset locations above and I'll answer questions over your data; otherwise try asking about categories, hours, or accessibility.`;
+  if (mode === "none" || !matched.length) {
+    if (!intent.matchedSignals.length && !intent.nameMention) {
+      if (!matched.length) {
+        return `I don't see anything yet. Upload a spreadsheet of asset locations above and I'll answer questions over your data; otherwise try asking about categories, hours, or accessibility.`;
+      }
+      const top = matched
+        .slice(0, 3)
+        .map((m) => `${m.name} (${(m.rating ?? 0).toFixed(1)}\u2605)`)
+        .join(", ");
+      return `Here's a snapshot of the atlas (${total} asset${
+        total === 1 ? "" : "s"
+      }), led by ${top}. Ask me about category, hours, accessibility, or cost for sharper results.`;
     }
-    const top = matched
-      .slice(0, 3)
-      .map((m) => `${m.name} (${(m.rating ?? 0).toFixed(1)}\u2605)`)
-      .join(", ");
-    return `Here's a snapshot of the atlas (${total} asset${
-      total === 1 ? "" : "s"
-    }), led by ${top}. Ask me about category, hours, accessibility, or cost for sharper results.`;
-  }
-
-  if (!matched.length) {
     const filterDesc = intent.matchedSignals.join(", ");
-    return `No asset in the atlas matches all of: ${filterDesc}. Try loosening the request — e.g. drop a feature or broaden the cost range.`;
+    if (!matched.length) {
+      return `No asset in the atlas currently matches all of: ${filterDesc}. Try loosening the request — e.g. drop a feature or widen the cost range.`;
+    }
   }
 
   const isPartial =
     rubric !== null && rubric.totalSignals > 0 &&
     rubric.matchedSignals < rubric.totalSignals;
-  const lead = matched.length === 1
-    ? `One asset matches${isPartial ? " partially" : ""}`
-    : `${matched.length} assets match${isPartial ? " partially" : ""}`;
-
-  const filterDesc = intent.matchedSignals.length
-    ? intent.matchedSignals.join(", ")
-    : intent.nameMention ?? "";
-
-  const list = matched
-    .slice(0, 3)
-    .map((m) => {
-      const r = (m.rating ?? 0).toFixed(1);
-      const p = priceLabel(m.priceTier ?? 0);
-      const open = isOpenAt(m.hours) ? " \u00b7 open now" : "";
-      return `${m.name} (${r}\u2605 \u00b7 ${p}${open})`;
-    })
-    .join(", ");
-  const tail = matched.length > 3 ? `, plus ${matched.length - 3} more` : "";
 
   const ratio = rubric && rubric.totalSignals > 0
     ? ` (matched ${rubric.matchedSignals}/${rubric.totalSignals} filters)`
     : "";
+  const partialSuffix = isPartial ? "\u2014 partially" : "\u2014";
 
-  return `${lead}${ratio} \u2014 ${filterDesc}: ${list}${tail}.`;
+  // PROFILE mode: user asked about a specific asset by name → pure profile lead.
+  if (mode === "profile") {
+    const m = matched[0];
+    const openNow = isOpenAt(m.hours) ? `\u00b7 open right now` : "";
+    const r = (m.rating ?? 0).toFixed(1);
+    return `${m.name} \u2014 ${m.tagline || CATEGORY_LABEL[m.category] || m.category || "asset"} (${r}\u2605 \u00b7 ${priceLabel(m.priceTier ?? 0)}${open ? ` ${open}` : ""}). Full hours, services, contact below.`;
+  }
+
+  // LIST mode: lead with filter description, then the structured cards flow below.
+  if (mode === "list") {
+    const filters = intent.matchedSignals.join(", ") || intent.nameMention || "";
+    const lead = `${matched.length} asset${matched.length === 1 ? "" : "s"} ${partialSuffix} ${filters || "consider"}:${ratio ? ` ${ratio}` : ""}`;
+    return lead.trim();
+  }
+
+  // SNAPSHOT mode
+  const top = matched
+    .slice(0, 3)
+    .map((m) => `${m.name} (${(m.rating ?? 0).toFixed(1)}\u2605)`)
+    .join(", ");
+  return `Here's a snapshot of the atlas (${total} asset${
+    total === 1 ? "" : "s"
+  }), led by ${top}. Ask me about category, hours, accessibility, or cost for sharper results.`;
 }
+
+// Category labels for the lead line. Mirrors CATEGORY_LABEL in
+// src/components/atlas/types.ts. Kept local so this module stays
+// importable from src/convex/* without pulling the rest of the client.
+const CATEGORY_LABEL: Record<string, string> = {
+  park: "Park / green space",
+  "recreation-center": "Recreation center",
+  school: "School",
+  clinic: "Clinic",
+  library: "Library",
+  "community-center": "Community center",
+  museum: "Museum / heritage site",
+  transit: "Transit station",
+};

@@ -11,7 +11,143 @@ import {
   type ChatMessage,
   type LocationDoc,
 } from "./types";
-import { searchRows, type SearchResponse } from "@/lib/atlas-search";
+import { searchRows, type AssetEvidence, type SearchResponse } from "@/lib/atlas-search";
+
+/** Parse inline `**bold**` markdown inside a services line into segments. */
+function renderBoldedSegments(text: string) {
+  const parts: Array<{ text: string; bold: boolean }> = [];
+  let rest = text;
+  let key = 0;
+  while (rest.length) {
+    const openIdx = rest.indexOf("**");
+    if (openIdx === -1) {
+      parts.push({ text: rest, bold: false });
+      break;
+    }
+    if (openIdx > 0) parts.push({ text: rest.slice(0, openIdx), bold: false });
+    const closeIdx = rest.indexOf("**", openIdx + 2);
+    if (closeIdx === -1) {
+      parts.push({ text: rest.slice(openIdx), bold: false });
+      break;
+    }
+    parts.push({ text: rest.slice(openIdx + 2, closeIdx), bold: true });
+    rest = rest.slice(closeIdx + 2);
+    key++;
+  }
+  return parts;
+}
+
+/** Structured evidence card row used in profile / list modes. */
+function EvidenceCard({
+  ev,
+  onCitation,
+}: {
+  ev: AssetEvidence;
+  onCitation: (slug: string) => void;
+}) {
+  const hasAnyFact =
+    !!ev.addressLine ||
+    !!ev.hoursToday ||
+    !!ev.contactLine ||
+    !!ev.websiteLine ||
+    !!ev.servicesLine ||
+    !!ev.priceLine;
+  return (
+    <button
+      type="button"
+      onClick={() => onCitation(ev.slug)}
+      className="group block w-full rounded-xl border border-border/70 bg-background/60 px-3.5 py-2.5 text-left shadow-card transition hover:border-accent/60 hover:bg-accent/10"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13.5px] font-semibold tracking-[-0.005em] text-foreground">
+          {ev.name}
+        </span>
+        {ev.hoursToday && (
+          <span
+            className={
+              ev.isOpenNow
+                ? "inline-flex items-center gap-1 rounded-full bg-[#6e0e1e15] px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-[#6e0e1e]"
+                : "inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted-foreground"
+            }
+          >
+            <span
+              className={
+                ev.isOpenNow
+                  ? "inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#6e0e1e]"
+                  : "inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground"
+              }
+            />
+            {ev.hoursToday}
+          </span>
+        )}
+        {ev.priceLine && (
+          <span className="inline-flex items-center rounded-full border border-border/60 bg-card/60 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
+            {ev.priceLine}
+          </span>
+        )}
+        {ev.ratingLine && (
+          <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
+            {ev.ratingLine}
+          </span>
+        )}
+      </div>
+      {hasAnyFact && (
+        <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-[11.5px] leading-snug">
+          {ev.tagline && (
+            <>
+              <dt className="text-muted-foreground">Type</dt>
+              <dd className="text-foreground/85">{ev.tagline}</dd>
+            </>
+          )}
+          {ev.addressLine && (
+            <>
+              <dt className="text-muted-foreground">Address</dt>
+              <dd className="text-foreground/85">{ev.addressLine}</dd>
+            </>
+          )}
+          {ev.hoursToday && (
+            <>
+              <dt className="text-muted-foreground">Hours</dt>
+              <dd className="text-foreground/85">{ev.hoursToday}</dd>
+            </>
+          )}
+          {ev.contactLine && (
+            <>
+              <dt className="text-muted-foreground">Contact</dt>
+              <dd className="text-foreground/85">{ev.contactLine}</dd>
+            </>
+          )}
+          {ev.websiteLine && (
+            <>
+              <dt className="text-muted-foreground">Web</dt>
+              <dd className="truncate text-foreground/85">{ev.websiteLine}</dd>
+            </>
+          )}
+          {ev.servicesLine && (
+            <>
+              <dt className="text-muted-foreground">Services</dt>
+              <dd className="text-foreground/85">
+                {ev.servicesLine.split(/\*\*/).map((chunk, i) => {
+                  const isBold = i % 2 === 1;
+                  return isBold ? (
+                    <span
+                      key={i}
+                      className="font-semibold text-[#6e0e1e]"
+                    >
+                      {chunk}
+                    </span>
+                  ) : (
+                    <span key={i}>{chunk}</span>
+                  );
+                })}
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+    </button>
+  );
+}
 import { useImportedData, mergeAssets } from "@/state/imported-data";
 import type { AtlasAsset } from "@/lib/csv-import";
 
@@ -46,22 +182,12 @@ function MessageBubble(props: {
       </motion.div>
     );
   }
-  // When the question matched only some filters, surface the ratio.
   const rubric = msg.rubric ?? null;
   const showRatio =
     rubric &&
     rubric.totalSignals > 1 &&
     rubric.matchedSignals < rubric.totalSignals;
-  // Collect distinct service tags across the matched rows so the user sees
-  // a "what's covered here" row above the citation chips.
-  const serviceTagSet = new Set<string>();
-  for (const m of msg.matched ?? []) {
-    const tags = (m as any).services as string[] | undefined;
-    if (!tags?.length) continue;
-    for (const t of tags) {
-      if (t && t.length < 40) serviceTagSet.add(t);
-    }
-  }
+  const evidence = (msg as any).evidence as AssetEvidence[] | undefined;
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -77,49 +203,15 @@ function MessageBubble(props: {
           </span>
         )}
       </div>
-      <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-card px-4 py-3 text-[13.5px] leading-relaxed text-card-foreground shadow-card ring-soft">
-        {msg.content}
-      </div>
-      {serviceTagSet.size > 0 && (
-        <div className="-mt-0.5 flex flex-wrap gap-1 pl-1">
-          <span className="self-center text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground">
-            services on tap
-          </span>
-          {Array.from(serviceTagSet)
-            .slice(0, 6)
-            .map((t) => (
-              <span
-                key={t}
-                className="inline-flex items-center rounded-full border border-border/60 bg-secondary/50 px-2 py-0.5 text-[10.5px] text-secondary-foreground"
-              >
-                {t}
-              </span>
-            ))}
+      {msg.content && (
+        <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-card px-4 py-3 text-[13.5px] leading-relaxed text-card-foreground shadow-card ring-soft">
+          {msg.content}
         </div>
       )}
-      {msg.matched && msg.matched.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1.5 pl-1">
-          {msg.matched.slice(0, 5).map((m) => (
-            <button
-              key={m.slug}
-              onClick={() => onCitation(m.slug)}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-2.5 py-1 text-[11.5px] font-medium shadow-card transition hover:border-accent/60 hover:bg-accent/10"
-            >
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-              {m.name}
-              <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">
-                {(m.rating ?? 0).toFixed(1)}★
-              </span>
-              {(m as any).priceTier !== undefined && (
-                <>
-                  <span className="text-muted-foreground">·</span>
-                  <span className="text-muted-foreground">
-                    {PRICE_SYMBOL[(m as any).priceTier as 0 | 1 | 2] ?? "—"}
-                  </span>
-                </>
-              )}
-            </button>
+      {evidence && evidence.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {evidence.slice(0, 4).map((ev) => (
+            <EvidenceCard key={ev.slug} ev={ev} onCitation={onCitation} />
           ))}
         </div>
       )}
@@ -206,6 +298,7 @@ export function ChatPanel(props: {
         matched: result.matched as LocationDoc[],
         intent: result.intent,
         rubric: (result as any).rubric ?? null,
+        evidence: (result as any).evidence,
       };
       return next;
     });
