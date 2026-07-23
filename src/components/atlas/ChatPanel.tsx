@@ -4,8 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp,
   Bot,
+  ChevronDown,
+  ChevronUp,
   Database,
   FileSpreadsheet,
+  Info,
   Loader2,
   MapPin,
   Sparkles,
@@ -337,6 +340,8 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     },
   ]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(true);
+  const [showGeoDetail, setShowGeoDetail] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -585,7 +590,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
         </div>
       </div>
 
-      {/* imported-file chip + geocode progress */}
+      {/* imported-file chip + geocode progress — compact */}
       <AnimatePresence>
         {importedState.filename && (
           <motion.div
@@ -594,145 +599,93 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             exit={{ opacity: 0, y: -4 }}
             className="mx-3 mt-3 flex flex-col gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
           >
-            <div className="flex items-center gap-2 text-accent-foreground">
+            {/* Compact single-line: filename · mapped · progress bar · geocoding x/x · info · close */}
+            <div className="flex items-center gap-2">
               {importedState.source === "native" ? (
-                <Database className="h-3.5 w-3.5 text-accent" />
+                <Database className="h-3.5 w-3.5 shrink-0 text-accent" />
               ) : (
-                <FileSpreadsheet className="h-3.5 w-3.5 text-accent" />
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-accent" />
               )}
               <span className="truncate font-medium text-foreground">
                 {importedState.source === "native" ? "public/data/" : ""}
                 {importedState.filename}
               </span>
-              <span className="text-muted-foreground">
+              <span className="shrink-0 text-muted-foreground">
                 · {importedState.rows.length} mapped
               </span>
-              {importedState.pending.length > 0 && (
-                <span className="text-muted-foreground">
-                  · {importedState.pending.length} geocoding
-                </span>
+              {importedState.progress.total > 0 && (
+                <>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    Geocoding {importedState.progress.done}/{importedState.progress.total}
+                  </span>
+                  <span className="h-1 grow-0 rounded-full bg-border" style={{ flexBasis: 60 }}>
+                    <span
+                      className="block h-1 rounded-full bg-accent transition-all"
+                      style={{ width: `${importedState.progress.total ? (importedState.progress.done / importedState.progress.total) * 100 : 0}%` }}
+                    />
+                  </span>
+                </>
               )}
-              {importedState.failed.length > 0 && (
-                <span className="text-muted-foreground">
-                  · {importedState.failed.length} ungeocodable
-                </span>
-              )}
-              {importedState.rejected > 0 && (
-                <span className="text-muted-foreground">
-                  · {importedState.rejected} skipped
-                </span>
-              )}
+              {/* Info icon — hover/click toggles the full detail breakdown */}
+              <button
+                type="button"
+                onClick={() => setShowGeoDetail((v) => !v)}
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+                aria-label="Show geocoding details"
+              >
+                <Info className="h-3 w-3" />
+              </button>
               <button
                 onClick={clear}
-                className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
                 aria-label="Clear import"
               >
                 <X className="h-3 w-3" />
               </button>
             </div>
-            {importedState.progress.total > 0 && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <span
-                  className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
-                  aria-hidden
-                />
-                <span className="tabular-nums">
-                  Geocoding {importedState.progress.done}/
-                  {importedState.progress.total}
-                </span>
-                {importedState.progress.cached > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.cached} cached
-                  </span>
-                )}
-                {importedState.progress.exact > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.exact} exact
-                  </span>
-                )}
-                {importedState.progress.relaxed > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.relaxed} relaxed
-                  </span>
-                )}
-                {importedState.progress.zipCentroid > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.zipCentroid} zip-centroid
-                  </span>
-                )}
-                {importedState.progress.cerebrasCleaned > 0 && (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
-                    title="Rows that Cerebras cleanly re-formatted and the geocoder then accepted."
-                  >
-                    <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-[#6e0e1e]" />
-                    {importedState.progress.cerebrasCleaned} cerebras-cleaned
-                  </span>
-                )}
-                {/* Live Cerebras call counter. Visible from the first row the
-                    map normalizer touches so the user can verify the action
-                    is firing without waiting for the loop to finish. Tied to
-                    `console.info("[atlas/llm-normalize] calling Cerebras
-                    …")` in imported-data.tsx so the same info shows up in
-                    DevTools. Gemini is not used on the map side. */}
-                {importedState.progress.cerebrasCallsMade > 0 && (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]"
-                    title={
-                      importedState.progress.cerebrasModelLabel
-                        ? `Actual outbound calls to ${importedState.progress.cerebrasModelLabel}. Detailed log in DevTools (filter: [atlas/llm-normalize]).`
-                        : `Detailed log in DevTools (filter: [atlas/llm-normalize]).`
-                    }
-                  >
-                    <span aria-hidden className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#6e0e1e]" />
-                    {importedState.progress.cerebrasCallsMade} Cerebras call{importedState.progress.cerebrasCallsMade === 1 ? "" : "s"}
-                    {importedState.progress.cerebrasModelLabel ? (
-                      <span className="ml-0.5 font-normal normal-case tracking-normal text-[#6e0e1e]/80">
-                        · {importedState.progress.cerebrasModelLabel}
-                      </span>
-                    ) : null}
-                  </span>
-                )}
-                {importedState.progress.cerebrasError > 0 && (
-                  <span className="text-foreground/70">
-                    · {importedState.progress.cerebrasError} cerebras errors
-                  </span>
-                )}
-                {importedState.progress.failed > 0 && (
-                  <>
-                    <span className="text-foreground/70">
-                      · {importedState.progress.failed} couldn't be located
-                    </span>
-                    <button
-                      type="button"
-                      onClick={retry}
-                      disabled={importing}
-                      className="ml-0.5 inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f] disabled:opacity-50"
-                      title="Re-run the address cascade on every previously failed row (cache stays intact for already-located rows)"
-                    >
-                      ↻ Retry
-                    </button>
-                  </>
-                )}
-                <span
-                  className="ml-auto h-1 grow-0 rounded-full bg-border"
-                  style={{ flexBasis: 80 }}
+            {/* Expandable detail panel */}
+            <AnimatePresence>
+              {showGeoDetail && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
                 >
-                  <span
-                    className="block h-1 rounded-full bg-accent transition-all"
-                    style={{
-                      width: `${
-                        importedState.progress.total
-                          ? (importedState.progress.done /
-                              importedState.progress.total) *
-                            100
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </span>
-              </div>
-            )}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10.5px] text-muted-foreground">
+                    {importedState.pending.length > 0 && <span>{importedState.pending.length} geocoding</span>}
+                    {importedState.failed.length > 0 && <span>{importedState.failed.length} ungeocodable</span>}
+                    {importedState.rejected > 0 && <span>{importedState.rejected} skipped</span>}
+                    {importedState.progress.cached > 0 && <span>{importedState.progress.cached} cached</span>}
+                    {importedState.progress.exact > 0 && <span>{importedState.progress.exact} exact</span>}
+                    {importedState.progress.relaxed > 0 && <span>{importedState.progress.relaxed} relaxed</span>}
+                    {importedState.progress.zipCentroid > 0 && <span>{importedState.progress.zipCentroid} zip-centroid</span>}
+                    {importedState.progress.cerebrasCleaned > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
+                        {importedState.progress.cerebrasCleaned} cerebras-cleaned
+                      </span>
+                    )}
+                    {importedState.progress.cerebrasCallsMade > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
+                        {importedState.progress.cerebrasCallsMade} Cerebras call{importedState.progress.cerebrasCallsMade === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    {importedState.progress.cerebrasError > 0 && <span>{importedState.progress.cerebrasError} cerebras errors</span>}
+                    {importedState.progress.failed > 0 && (
+                      <button
+                        type="button"
+                        onClick={retry}
+                        disabled={importing}
+                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f] disabled:opacity-50"
+                        title="Re-run the address cascade on every previously failed row"
+                      >
+                        ↻ Retry
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
@@ -759,19 +712,38 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
         )}
       </div>
 
-      {/* suggestions */}
+      {/* suggestions — collapsible */}
       <div className="px-4 pb-2">
-        <div className="-mx-1 flex flex-wrap gap-1.5 overflow-x-auto px-1">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => submit(s)}
-              className="shrink-0 rounded-full border border-border/60 bg-secondary/50 px-2.5 py-1 text-[11.5px] text-secondary-foreground transition hover:border-accent/60 hover:bg-accent/10"
+        <button
+          type="button"
+          onClick={() => setShowSuggestions((v) => !v)}
+          className="mb-1 inline-flex items-center gap-1 text-[10.5px] font-medium uppercase tracking-[0.14em] text-muted-foreground transition hover:text-foreground"
+        >
+          {showSuggestions ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+          Suggested questions
+        </button>
+        <AnimatePresence>
+          {showSuggestions && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
             >
-              {s}
-            </button>
-          ))}
-        </div>
+              <div className="-mx-1 flex flex-wrap gap-1.5 overflow-x-auto px-1">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => submit(s)}
+                    className="shrink-0 rounded-full border border-border/60 bg-secondary/50 px-2.5 py-1 text-[11.5px] text-secondary-foreground transition hover:border-accent/60 hover:bg-accent/10"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* input + import — stays anchored at the bottom; the textarea is
