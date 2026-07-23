@@ -10,9 +10,8 @@ import {
   PRICE_SYMBOL,
   type ChatMessage,
   type LocationDoc,
-  type SearchResponse,
 } from "./types";
-import { searchRows } from "@/lib/atlas-search";
+import { searchRows, type SearchResponse } from "@/lib/atlas-search";
 import { useImportedData, mergeAssets } from "@/state/imported-data";
 import type { AtlasAsset } from "@/lib/csv-import";
 
@@ -30,7 +29,7 @@ function newId() {
 }
 
 function MessageBubble(props: {
-  msg: ChatMessage;
+  msg: ChatMessage & { rubric?: { totalSignals: number; matchedSignals: number } | null };
   onCitation: (slug: string) => void;
 }) {
   const { msg, onCitation } = props;
@@ -47,6 +46,22 @@ function MessageBubble(props: {
       </motion.div>
     );
   }
+  // When the question matched only some filters, surface the ratio.
+  const rubric = msg.rubric ?? null;
+  const showRatio =
+    rubric &&
+    rubric.totalSignals > 1 &&
+    rubric.matchedSignals < rubric.totalSignals;
+  // Collect distinct service tags across the matched rows so the user sees
+  // a "what's covered here" row above the citation chips.
+  const serviceTagSet = new Set<string>();
+  for (const m of msg.matched ?? []) {
+    const tags = (m as any).services as string[] | undefined;
+    if (!tags?.length) continue;
+    for (const t of tags) {
+      if (t && t.length < 40) serviceTagSet.add(t);
+    }
+  }
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -56,10 +71,32 @@ function MessageBubble(props: {
       <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
         <Sparkles className="h-3 w-3 text-accent" />
         Atlas
+        {showRatio && (
+          <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 text-[10px] normal-case tracking-normal text-foreground/70">
+            matched {rubric.matchedSignals}/{rubric.totalSignals} filters
+          </span>
+        )}
       </div>
       <div className="max-w-[88%] rounded-2xl rounded-bl-md bg-card px-4 py-3 text-[13.5px] leading-relaxed text-card-foreground shadow-card ring-soft">
         {msg.content}
       </div>
+      {serviceTagSet.size > 0 && (
+        <div className="-mt-0.5 flex flex-wrap gap-1 pl-1">
+          <span className="self-center text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground">
+            services on tap
+          </span>
+          {Array.from(serviceTagSet)
+            .slice(0, 6)
+            .map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center rounded-full border border-border/60 bg-secondary/50 px-2 py-0.5 text-[10.5px] text-secondary-foreground"
+              >
+                {t}
+              </span>
+            ))}
+        </div>
+      )}
       {msg.matched && msg.matched.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-1.5 pl-1">
           {msg.matched.slice(0, 5).map((m) => (
@@ -72,8 +109,16 @@ function MessageBubble(props: {
               {m.name}
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground">
-                {m.rating.toFixed(1)}★
+                {(m.rating ?? 0).toFixed(1)}★
               </span>
+              {(m as any).priceTier !== undefined && (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="text-muted-foreground">
+                    {PRICE_SYMBOL[(m as any).priceTier as 0 | 1 | 2] ?? "—"}
+                  </span>
+                </>
+              )}
             </button>
           ))}
         </div>
@@ -158,8 +203,9 @@ export function ChatPanel(props: {
         ...next[idx],
         pending: false,
         content: result.answer,
-        matched: result.matched,
+        matched: result.matched as LocationDoc[],
         intent: result.intent,
+        rubric: (result as any).rubric ?? null,
       };
       return next;
     });

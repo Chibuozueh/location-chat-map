@@ -55,6 +55,8 @@ export type ChatMessage = {
   matched?: LocationDoc[];
   intent?: any;
   pending?: boolean;
+  /** Optional partial-match rubric surfaced from the search engine. */
+  rubric?: { totalSignals: number; matchedSignals: number } | null;
 };
 
 export type AtlasIntent = {
