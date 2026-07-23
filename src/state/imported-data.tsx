@@ -123,6 +123,15 @@ type ImportedContextValue = {
   importFromFile: (file: File) => Promise<void>;
   retry: () => void;
   clear: () => void;
+  /**
+   * Route rows from an already-translated `LocationDoc[]` (typically
+   * `api.locations.list` → SEED_LOCATIONS) through the existing
+   * Cerebras → Nominatim geocode cascade. Rows with finite lat/lng
+   * land directly in `state.rows`; missing-coord rows go into
+   * `state.pending` so the per-row geocode loop picks them up.
+   * Bumping `retryNonce` re-fires that loop without an "import" event.
+   */
+  seedBackfill: (seeded: LocationDoc[]) => void;
 };
 
 const ImportedContext = createContext<ImportedContextValue | null>(null);
@@ -660,6 +669,85 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.importedAt, state.retryNonce]);
 
+  /**
+   * Push rows from the canonical seed list (or any other LocationDoc[]) into
+   * the existing geocode pipeline on first paint:
+   *   - Rows that already carry finite lat/lng land directly in `state.rows`
+   *     (the map plots them immediately, no API call).
+   *   - Rows missing coords land in `state.pending` with `needsGeocode: true`
+   *     and a synthesized `geoKey`. Bumping `retryNonce` triggers the existing
+   *     Cerebras → Nominatim cascade loop, which routes each row through
+   *     the same per-row `setState` path that uploaded CSVs already use.
+   *
+   * The function is idempotent on slug — re-rendering with the same batch is
+   * a no-op so React's double-mount or fast-refresh can't double-charge the
+   * geocoder.
+   */
+  const seedBackfill = useCallback((seeded: LocationDoc[]) => {
+    if (seeded.length === 0) return;
+    const ready: AtlasAsset[] = [];
+    const pending: Array<{ id: string; doc: AtlasAsset }> = [];
+    seeded.forEach((a, i) => {
+      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) {
+        ready.push(a as unknown as AtlasAsset);
+        return;
+      }
+      // The address column often contains "VenueName\n123 Street SW" or just
+      // "various". Use only the last non-empty line so the cascade feeds
+      // Nominatim a real street (matching what `importCsv` does via
+      // `parseFreeformAddress`).
+      const lines = (a.address ?? "")
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const streetLine = lines.length > 1 ? lines[lines.length - 1] : lines[0] ?? "";
+      const postcode = (a.postalCode ?? "").trim();
+      pending.push({
+        id: `seed:${i}:${a.slug}`,
+        doc: {
+          ...(a as any),
+          address: streetLine || "Atlanta",
+          lat: NaN,
+          lng: NaN,
+          needsGeocode: true,
+          geoKey: streetLine
+            ? `${streetLine.toLowerCase()}|${(a.city ?? "").toLowerCase()}|${postcode}`
+            : a.slug,
+          coordAccuracy: undefined,
+        } as AtlasAsset,
+      });
+    });
+
+    setState((prev) => {
+      const havePending = new Set(prev.pending.map((p) => p.doc.slug));
+      const haveRows = new Set(prev.rows.map((r) => r.slug));
+      const novelPending = pending.filter((p) => !havePending.has(p.doc.slug));
+      const novelReady = ready.filter((r) => !haveRows.has(r.slug));
+      if (novelPending.length === 0 && novelReady.length === 0) return prev;
+
+      return {
+        ...prev,
+        rows: [...prev.rows, ...novelReady],
+        pending: [...prev.pending, ...novelPending],
+        // Tag the native source so Landing knows to replace the seeded
+        // rows in `merged.mappable` with the resolved ones from
+        // `state.rows`.
+        filename: prev.filename ?? "atlas-seed",
+        source: prev.source ?? "native",
+        progress: {
+          ...prev.progress,
+          total: prev.progress.total + novelPending.length,
+          active: prev.progress.active || novelPending.length > 0,
+        },
+        // CRITICAL: bumping retryNonce re-fires the existing
+        // `useEffect([importedAt, retryNonce])` so the per-row
+        // geocode loop iterates the new `state.pending` rows.
+        retryNonce: prev.retryNonce + 1,
+        released: true,
+      };
+    });
+  }, []);
+
   const value = useMemo<ImportedContextValue>(
     () => ({
       state,
@@ -668,8 +756,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       importFromFile,
       retry,
       clear,
+      seedBackfill,
     }),
-    [state, importing, importFromFile, retry, clear],
+    [state, importing, importFromFile, retry, clear, seedBackfill],
   );
 
   return (

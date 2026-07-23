@@ -23,7 +23,24 @@ function LandingInner() {
   const seeded =
     (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
   const top = useQuery(api.locations.topPicks);
-  const { state: importedState } = useImportedData();
+  const { state: importedState, seedBackfill } = useImportedData();
+
+  // First-paint backfill: route SEED rows that lack lat/lng through the
+  // existing Cerebras → Nominatim cascade. Tracked by a stable slug-list
+  // signature so editing SEED_LOCATIONS in code (which changes the
+  // signature) re-runs the backfill on the next refresh, while React's
+  // double-mount / fast-refresh won't double-charge the geocoder.
+  const seedBackfillSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (seeded.length === 0) return;
+    const sig = seeded
+      .map((s) => s.slug)
+      .sort()
+      .join("|");
+    if (seedBackfillSigRef.current === sig) return;
+    seedBackfillSigRef.current = sig;
+    seedBackfill(seeded);
+  }, [seeded, seedBackfill]);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [pickerClusterKey, setPickerClusterKey] = useState<string | null>(null);

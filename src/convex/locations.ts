@@ -37,6 +37,7 @@ function translateSeed(raw: any): AtlasAsset {
     typeof raw?.lat === "number" && Number.isFinite(raw.lat) ? raw.lat : NaN;
   const lng =
     typeof raw?.lng === "number" && Number.isFinite(raw.lng) ? raw.lng : NaN;
+  const hasFiniteCoords = Number.isFinite(lat) && Number.isFinite(lng);
   const services = (raw?.servicesResourcesAvailable ?? "").toString().trim();
   const notes = (raw?.notesObservations ?? "").toString().trim();
   const description = [services, notes].filter(Boolean).join("\n\n");
@@ -70,9 +71,14 @@ function translateSeed(raw: any): AtlasAsset {
     contactName: raw?.keyContact || undefined,
     contactPhone: raw?.contactPhone || undefined,
     contactEmail: raw?.contactEmail || undefined,
-    needsGeocode: false,
-    coordAccuracy:
-      raw?.coordAccuracy ?? (Number.isFinite(lat) ? "exact" : undefined),
+    // Flag missing-coord rows so the client can route them through the
+    // Cerebras -> Nominatim backfill on first paint (see `seedBackfill`
+    // in src/state/imported-data.tsx). Rows that already carry
+    // hand-coded coords skip the cascade entirely.
+    needsGeocode: !hasFiniteCoords,
+    coordAccuracy: hasFiniteCoords
+      ? raw?.coordAccuracy ?? "exact"
+      : undefined,
   };
 }
 
