@@ -91,35 +91,59 @@ function readGeminiKey(): { key: string | null; envName: string | null } {
   return { key: null, envName: null };
 }
 
-function resolveProvider(): {
-  provider: ProviderName;
+/** Per-provider config snapshot returned to callers. */
+export type ResolvedProvider = {
+  name: ProviderName;
   cfg: ProviderConfig;
-  /** Every env-var name we tried to read for the active provider. */
-  triedEnvVars: string[];
-} {
-  const provider = (process.env.LLM_PROVIDER ?? "gemini").toLowerCase() as
-    | ProviderName;
-  if (provider === "nebius") {
-    const nebiusKey = process.env.NEBIUS_API_KEY ?? null;
+};
+
+/**
+ * Read the ordered fallback chain. Defaults to `["gemini", "nebius"]`.
+ *
+ * Override order:
+ *   1. `LLM_PROVIDERS` (comma-separated) — preferred for multi-provider setup.
+ *   2. `LLM_PROVIDER` (single value) — legacy / power-user override.
+ *   3. Hardcoded default `["gemini", "nebius"]`.
+ *
+ * Any unknown provider names are dropped. De-duplicated while preserving
+ * order.
+ */
+function readProviderChain(): ProviderName[] {
+  const raw =
+    process.env.LLM_PROVIDERS?.trim() ||
+    process.env.LLM_PROVIDER?.trim() ||
+    "gemini,nebius";
+  const seen = new Set<ProviderName>();
+  const out: ProviderName[] = [];
+  for (const part of raw.split(",")) {
+    const p = part.trim().toLowerCase() as ProviderName;
+    if (p !== "gemini" && p !== "nebius") continue;
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out.length ? out : ["gemini", "nebius"];
+}
+
+function buildProvider(name: ProviderName): ResolvedProvider {
+  if (name === "nebius") {
     return {
-      provider,
+      name,
       cfg: {
-        apiKey: nebiusKey,
-        model:
-          process.env.NEBIUS_MODEL_ID ?? "deepseek-ai/DeepSeek-V3",
+        apiKey: process.env.NEBIUS_API_KEY ?? null,
+        model: process.env.NEBIUS_MODEL_ID ?? "deepseek-ai/DeepSeek-V3",
         baseUrl:
           process.env.NEBIUS_BASE_URL ??
           "https://api.tokenfactory.nebius.com/v1/",
         label: "Nebius · DeepSeek V3",
         keyEnv: "NEBIUS_API_KEY",
       },
-      triedEnvVars: ["NEBIUS_API_KEY"],
     };
   }
-  // Default: Gemini native REST.
+  // gemini
   const { key, envName } = readGeminiKey();
   return {
-    provider,
+    name,
     cfg: {
       apiKey: key,
       model: process.env.GEMINI_MODEL ?? "gemini-flash-latest",
@@ -127,8 +151,21 @@ function resolveProvider(): {
       label: "Gemini · gemini-flash-latest",
       keyEnv: envName ?? "GEMINI_API_KEY",
     },
-    triedEnvVars: [...GEMINI_KEY_ENV_NAMES],
   };
+}
+
+/**
+ * Resolve the ordered provider chain in chain order, dropping any provider
+ * whose API key is not configured. Returns every provider so the UI can
+ * describe the chain even when only one is active.
+ */
+export function resolveProviders(): ResolvedProvider[] {
+  return readProviderChain().map(buildProvider);
+}
+
+/** Primary provider (first with a configured key). Returns null if none. */
+export function resolvePrimaryProvider(): ResolvedProvider | null {
+  return resolveProviders().find((p) => !!p.cfg.apiKey) ?? null;
 }
 
 type LLMResult = {
@@ -290,9 +327,14 @@ async function callNebius(
 }
 
 /**
- * Common LLM entrypoint. Resolves the active provider and dispatches to the
- * matching transport. Returns the model output as a single string, or a
- * friendly error.
+ * Common LLM entrypoint. Iterates the configured provider chain and calls
+ * the first one whose key is set. Falls through to the next provider on
+ * RECOVERABLE upstream errors (HTTP 429 / 503 / network / abort). Stops on
+ * NON-RECOVERABLE errors (HTTP 401 / 403 / 400) because switching provider
+ * won't fix an auth or malformed-input problem.
+ *
+ * Returns `{content?, error?, providerLabel?}` — `providerLabel` is the
+ * label of whichever provider actually answered (or was attempted last).
  */
 async function callLLM(opts: {
   system: string;
@@ -304,34 +346,54 @@ async function callLLM(opts: {
   /** Lower-temperature for strict JSON like the address normalizer. */
   temperature?: number;
 }): Promise<LLMResult> {
-  const { provider, cfg } = resolveProvider();
-  if (!cfg.apiKey) {
-    // List every name we tried so the user can spot the typo / misnamed
-    // entry in one read instead of going back and forth.
+  const chain = resolveProviders().filter((p) => !!p.cfg.apiKey);
+  if (chain.length === 0) {
     const triedList = GEMINI_KEY_ENV_NAMES.join(", ");
     return {
       error:
-        `Atlas Assistant is offline — add one of [${triedList}] ` +
+        `Atlas Assistant is offline — add one of [${triedList}] (or NEBIUS_API_KEY) ` +
         `in the project's Keys/API keys tab to enable conversational answers.`,
     };
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
-  const callOpts: CallOpts = {
-    system: opts.system,
-    user: opts.user,
-    signal: controller.signal,
-    temperature: opts.temperature,
-    maxOutputTokens: opts.maxOutputTokens,
-  };
 
   try {
-    const result =
-      provider === "gemini"
-        ? await callGemini(cfg, callOpts)
-        : await callNebius(cfg, callOpts);
-    return { ...result, providerLabel: cfg.label };
+    let lastError: string | undefined;
+    for (const { cfg } of chain) {
+      const callOpts: CallOpts = {
+        system: opts.system,
+        user: opts.user,
+        signal: controller.signal,
+        temperature: opts.temperature,
+        maxOutputTokens: opts.maxOutputTokens,
+      };
+      const result =
+        cfg.label.startsWith("Gemini")
+          ? await callGemini(cfg, callOpts)
+          : await callNebius(cfg, callOpts);
+      if (!result.error) {
+        return { ...result, providerLabel: cfg.label };
+      }
+      // Distinguish recoverable vs non-recoverable from the error string.
+      // Auth / bad-input errors use specific phrasings we wrote in the
+      // transports; everything else (rate limit, network, timeout, generic
+      // 5xx) is recoverable and we try the next provider.
+      const e = result.error;
+      const nonRecoverable =
+        /was rejected by/.test(e) ||
+        /wasn't 2 letters|wasn't 5 digits|returned 4\d\d|returned 400\b/i.test(
+          e,
+        );
+      lastError = e;
+      console.warn(
+        `[callLLM] ${cfg.label} failed (${nonRecoverable ? "non-recoverable" : "recoverable"}): ${e}`,
+      );
+      if (nonRecoverable) break;
+      // else: try the next provider in the chain
+    }
+    return { error: lastError ?? "Atlas Assistant is offline." };
   } finally {
     clearTimeout(timeout);
   }
@@ -340,29 +402,48 @@ async function callLLM(opts: {
 /** Read-only helper used elsewhere if we want to surface the provider label
  *  in the UI. Returns null when no key is set. */
 export async function activeProviderLabel(): Promise<string | null> {
-  const { cfg } = resolveProvider();
-  return cfg.apiKey ? cfg.label : null;
+  return resolvePrimaryProvider()?.cfg.label ?? null;
 }
 
-/** Debug helper — returns the live provider config so the UI can show
- *  the user which env-var name is actually visible to the Convex runtime.
+/** Debug helper — returns the full provider chain so the UI can show
+ *  the user which env-var names are visible to the Convex runtime, which
+ *  provider is primary, and which backups are armed.
  *  Exposes NO secret material — just booleans + names. */
 export async function providerStatus(): Promise<{
-  provider: "gemini" | "nebius";
-  configured: boolean;
-  activeEnvName: string | null;
+  chain: Array<{
+    name: "gemini" | "nebius";
+    configured: boolean;
+    activeEnvName: string | null;
+    label: string;
+    model: string;
+  }>;
+  primary: {
+    name: "gemini" | "nebius";
+    label: string;
+    model: string;
+    activeEnvName: string | null;
+  } | null;
   triedEnvVars: string[];
-  label: string;
-  model: string;
 }> {
-  const { provider, cfg, triedEnvVars } = resolveProvider();
+  const chain = resolveProviders();
+  const primary = resolvePrimaryProvider();
   return {
-    provider,
-    configured: !!cfg.apiKey,
-    activeEnvName: cfg.apiKey ? cfg.keyEnv : null,
-    triedEnvVars,
-    label: cfg.label,
-    model: cfg.model,
+    chain: chain.map(({ name, cfg }) => ({
+      name,
+      configured: !!cfg.apiKey,
+      activeEnvName: cfg.apiKey ? cfg.keyEnv : null,
+      label: cfg.label,
+      model: cfg.model,
+    })),
+    primary: primary
+      ? {
+          name: primary.name,
+          label: primary.cfg.label,
+          model: primary.cfg.model,
+          activeEnvName: primary.cfg.keyEnv,
+        }
+      : null,
+    triedEnvVars: [...GEMINI_KEY_ENV_NAMES],
   };
 }
 

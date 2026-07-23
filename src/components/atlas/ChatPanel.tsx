@@ -304,6 +304,10 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
   const { onCitation } = props;
   const [input, setInput] = useState("");
   const [smartAssistant, setSmartAssistant] = useState(true);
+  /** Provider that answered the most recent chat LLM call. Starts as the
+   *  resolved primary provider; updated on every successful fallback so the
+   *  footer hint can tell the user when we silently swapped providers. */
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -423,6 +427,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     const ctx = buildLlmContext(lastEvidence);
     triggerLlm({ question: pendingQuestion, context: ctx })
       .then((res) => {
+        if (res.providerLabel) setActiveProvider(res.providerLabel);
         if (res.error) {
           patchMessage(pendingId, {
             isLlmLoading: false,
@@ -754,7 +759,9 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
           {smartAssistant && (
             <>
               {" · "}narrations via{" "}
-              <span className="text-foreground/80">Gemini · gemini-flash-latest</span>
+              <span className="text-foreground/80">
+                {activeProvider ?? "Gemini · gemini-flash-latest"}
+              </span>
             </>
           )}
         </div>
