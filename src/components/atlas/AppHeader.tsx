@@ -20,8 +20,8 @@ export function AppHeader() {
             <span className="font-display text-[15px] font-bold uppercase tracking-[0.04em] text-[#6E0E1E]">
               Morehouse
             </span>
-            <span className="mt-1 font-sans text-[9.5px] uppercase tracking-[0.22em] text-foreground/60">
-              Southwest ATL asset map
+            <span className="mt-1 font-sans text-[9.5px] font-bold uppercase tracking-[0.22em] text-black">
+              Chelsea Egbuchunam
             </span>
           </div>
           <span className="hidden h-9 w-px bg-border/70 md:block" />
