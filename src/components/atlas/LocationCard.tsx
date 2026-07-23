@@ -202,29 +202,35 @@ export function LocationCard(props: {
           <div className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/40 p-2.5 text-[11.5px] text-muted-foreground">
             <Clock className="mt-[1px] h-3 w-3 shrink-0" />
             <div className="grid w-full grid-cols-7 gap-1">
-              {(["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const).map(
-                (d, i) => {
-                  const isToday =
-                    ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][i] ===
-                    today.toLowerCase();
-                  const h = loc.hours[d];
-                  const label =
-                    h.open === "—" || h.close === "—"
-                      ? "Closed"
-                      : `${h.open}–${h.close}`;
-                  return (
-                    <div
-                      key={d}
-                      className={`rounded px-1 py-0.5 text-center ${isToday ? "bg-accent/15 text-foreground" : ""}`}
-                    >
-                      <div className="text-[9.5px] uppercase tracking-wider">
-                        {dayLabel(i + 1).slice(0, 1)}
-                      </div>
-                      <div className="text-[10px] tabular-nums">{label}</div>
+              {(
+                [
+                  ["mon", "M"],
+                  ["tue", "T"],
+                  ["wed", "W"],
+                  ["thu", "T"],
+                  ["fri", "F"],
+                  ["sat", "S"],
+                  ["sun", "S"],
+                ] as const
+              ).map(([d, dayLabelChar]) => {
+                const isToday = d === today.toLowerCase();
+                const h = loc.hours[d];
+                const label =
+                  h.open === "—" || h.close === "—"
+                    ? "Closed"
+                    : `${h.open}–${h.close}`;
+                return (
+                  <div
+                    key={d}
+                    className={`rounded px-1 py-0.5 text-center ${isToday ? "bg-accent/15 text-foreground" : ""}`}
+                  >
+                    <div className="text-[9.5px] uppercase tracking-wider">
+                      {dayLabelChar}
                     </div>
-                  );
-                },
-              )}
+                    <div className="text-[10px] tabular-nums">{label}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
