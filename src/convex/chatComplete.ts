@@ -351,32 +351,46 @@ export const chatComplete = action({
 //  ones. Caller hot-rejoins the cascade with the cleaned values.
 // ---------------------------------------------------------------------------
 
-const NORMALIZER_SYSTEM_PROMPT = `You are an address-normalization expert for Atlanta-metro community-asset spreadsheets.
+const NORMALIZER_SYSTEM_PROMPT = `You are an address-normalization expert for the Atlanta-metro (Georgia, USA) community-asset spreadsheet use case.
 
 # Goal
-Reformat, reorder, and de-dup the components of a messy US street address so it can be re-passed to a geocoder.
+Reformat the messy address below into a CLEAN, STANDARD USPS-style address that can be passed directly to a geocoder. You ARE the parser — the next stage is the geocoder, not human eyes.
 
-# What you may do
-- Strip leading business names ("Joe's Place")
-- Move trailing unit/suite tokens to a dedicated field
-- Standardize city names ("ATL" → "Atlanta", "Stn Mountain" → "Stone Mountain")
-- Spell out street suffixes ("St" → "Street", "Hwy" → "Highway")
-- Spell out state directionals ("S" → "South", "NW" → "Northwest")
-- Reformat ZIP+4 → ZIP-only when needed
-- Capitalize words properly ("peachtree st ne" → "Peachtree St NE")
+# Context you can lean on
+- The user is uploading a CSV of community assets in the SOUTHWEST ATLANTA area.
+- **Known city/state/country** are explicitly supplied (see "Known city / state / country" in the user message). If a row is missing a city or state, fill them in from the known values rather than leaving blanks.
+- **Asset name hint** is supplied. Use it as a strong disambiguator:
+  * "MARTA Bankhead", "Bankhead MARTA Station", "near Bankhead MARTA" → the MARTA Bankhead Station at **1335 Donald Lee Hollowell Pkwy NW, Atlanta, GA 30318**.
+  * "Good Samaritan Health Center", "Good Sam" → its actual address on Donald Lee Hollowell Pkwy in Atlanta.
+  * "Atlanta-Fulton Public Library - Bankhead" → the Bankhead branch address.
+  * If the asset name itself names a well-known Atlanta landmark, school, hospital, library, MARTA station, park, rec center, or church, output that landmark's REAL street address — but ONLY if you're confident (≥ medium). When unsure, return the raw address with light cleanup and confidence "low".
+
+# What you MAY do
+- Strip a leading business name from the address line ("Joe's Place, 123 Main St" → "123 Main St")
+- Move trailing unit/suite tokens (or omit them — the geocoder doesn't need them)
+- Standardize city names: "ATL" / "atlanta, ga" / "Atlanta Georgia" → "Atlanta"
+- Spell out street suffixes: "St" → "Street", "Hwy" → "Highway", "Ave" → "Avenue", "Blvd" → "Boulevard", "Rd" → "Road", "Dr" → "Drive", "Ln" → "Lane", "Ct" → "Court", "Cir" → "Circle", "Pl" → "Place", "Ter" → "Terrace", "Pkwy" → "Parkway", "Way" → "Way"
+- Spell out directionals: "N" → "North", "S" → "South", "E" → "East", "W" → "West", "NE" → "Northeast", "NW" → "Northwest", "SE" → "Southeast", "SW" → "Southwest"
+- Reformat ZIP+4 → 5-digit ZIP only ("30314-1234" → "30314")
+- Expand cross-street shorthand: "Peachtree & Linden" → "Peachtree Street Northwest & Linden Avenue Northwest" (or "Peachtree St NW & Linden Ave NW")
+- Capitalize words properly: "peachtree st ne" → "Peachtree St NE"
+- When the row is missing a city or state, fill them from the known values supplied below.
 
 # What you MUST NOT do
-- **NEVER invent a street number, ZIP, or city** that wasn't originally in the input.
-- If the input is too ambiguous to normalize (e.g. just "Atlanta area", or a relative phrase like "across from MARTA Bankhead"), output confidence "low" and leave fields blank.
-- If the input has a ZIP and a city that disagree, keep them as supplied — do NOT pick one arbitrarily.
+- NEVER invent a STREET NUMBER that wasn't originally in the input.
+- NEVER invent a ZIP that wasn't originally in the input.
+- NEVER fabricate a new street name. The street name must come from the row — you may only spell out / capitalize / disambiguate it.
+- If the row is truly un-parseable (relative phrases, PO Box only, "down the street from…", a building with no street anywhere), output confidence "low", leave fields blank, and explain briefly inside "notes" — but NEVER guess.
+- If the row has a ZIP and a city that DISAGREE, keep BOTH as supplied — do not pick one.
 
-# Output format (strict JSON, no markdown fences, no prose)
+# Output format (strict JSON object, no markdown fences, no prose, no commentary)
 {
-  "street": "<cleaned street line, no city/state/zip>",
-  "city": "<cleaned city name, or empty>",
-  "state": "<two-letter state code, or empty>",
-  "postalcode": "<5-digit ZIP, or empty>",
-  "confidence": "high" | "medium" | "low"
+  "street": "<cleaned street line only — no city/state/zip, no trailing commas>",
+  "city": "<cleaned city name, or empty string>",
+  "state": "<two-letter state code, or empty string>",
+  "postalcode": "<5-digit ZIP, or empty string>",
+  "confidence": "high" | "medium" | "low",
+  "notes": "<one short sentence when confidence is low, otherwise empty>"
 }`;
 
 type NormalizeResult = {
@@ -443,13 +457,21 @@ export const normalizeAddress = action({
     rawState: v.optional(v.string()),
     rawPostalCode: v.optional(v.string()),
     assetName: v.optional(v.string()),
+    /** Defaults filled in by the caller for the Southwest Atlanta area. */
+    knownCity: v.optional(v.string()),
+    knownState: v.optional(v.string()),
+    knownCountry: v.optional(v.string()),
   },
   handler: async (_ctx, args): Promise<NormalizeResult> => {
+    const knownCity = args.knownCity ?? "Atlanta";
+    const knownState = args.knownState ?? "GA";
+    const knownCountry = args.knownCountry ?? "USA";
     const user = [
       `Raw street: ${args.rawStreet || "(empty)"}`,
       `Raw city: ${args.rawCity || "(empty)"}`,
       `Raw state: ${args.rawState || "(empty)"}`,
       `Raw ZIP: ${args.rawPostalCode || "(empty)"}`,
+      `Known city / state / country: ${knownCity}, ${knownState}, ${knownCountry}`,
       args.assetName ? `Hint (asset name): ${args.assetName}` : "",
       "",
       "Return ONLY the strict JSON object described in your system prompt.",
@@ -460,7 +482,7 @@ export const normalizeAddress = action({
     const res = await callLLM({
       system: NORMALIZER_SYSTEM_PROMPT,
       user,
-      maxOutputTokens: 600,
+      maxOutputTokens: 800,
       temperature: 0,
     });
     if (res.error || !res.content) {
