@@ -817,7 +817,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             <>
               {" · "}narrations via{" "}
               <span className="text-foreground/80">
-                {activeProvider ?? "Gemini · gemini-flash-latest"}
+                {activeProvider ?? "GitHub Models · gpt-4o-mini"}
               </span>
             </>
           )}
