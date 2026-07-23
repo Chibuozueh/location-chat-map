@@ -1,18 +1,22 @@
 "use node";
 
 /**
- * Convex action that proxies the user's question to an OpenAI-compatible
- * chat completions endpoint. Defaults to Google Gemini's OpenAI-compatible
- * path; set `LLM_PROVIDER=nebius` to fall back to Nebius Token Factory
- * (DeepSeek V3) without code changes.
+ * Convex action that proxies the user's question to an large-language-model
+ * chat provider. Defaults to Google Gemini's *native* REST endpoint (the
+ * user-supplied curl pattern: `X-goog-api-key` header + `/v1beta/models/{m}
+ * odel:generateContent`). Set `LLM_PROVIDER=nebius` to fall back to
+ * Nebius Token Factory over the OpenAI-compatible path.
  *
- * Provider = "gemini" (default):
+ * Provider = "gemini" (default):  POST to
+ *   https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent
+ *   Header: X-goog-api-key: ${KEY}
  *   - GEMINI_API_KEY       (required)
- *   - GEMINI_MODEL         (optional; default: gemini-2.0-flash)
- *   - GEMINI_BASE_URL      (optional; default:
- *       https://generativelanguage.googleapis.com/v1beta/openai/)
+ *   - GEMINI_MODEL         (optional; default: gemini-flash-latest)
+ *   - GEMINI_BASE_URL      (optional; default: the Google endpoint above)
  *
  * Provider = "nebius":
+ *   POST to {baseUrl}/chat/completions
+ *   Header: Authorization: Bearer ${KEY}
  *   - NEBIUS_API_KEY       (required)
  *   - NEBIUS_MODEL_ID      (optional; default: deepseek-ai/DeepSeek-V3)
  *   - NEBIUS_BASE_URL      (optional; default:
@@ -51,13 +55,23 @@ type ProviderName = "gemini" | "nebius";
 
 type ProviderConfig = {
   apiKey: string | null;
+  /** Model identifier passed to the upstream provider. */
   model: string;
+  /**
+   * Gemini: stored but unused — endpoint is fixed to Google's
+   * `generativelanguage.googleapis.com`. Nebius: base URL for the
+   * OpenAI-compatible chat endpoint.
+   */
   baseUrl: string;
   /** Human label for error messages & UI hint. */
   label: string;
   /** Env var name that holds the API key (for the "add it to Keys tab" hint). */
   keyEnv: string;
 };
+
+/** The Gemini native endpoint URL pattern. */
+const GEMINI_DEFAULT_BASE =
+  "https://generativelanguage.googleapis.com/v1beta/models";
 
 function resolveProvider(): {
   provider: ProviderName;
@@ -80,60 +94,57 @@ function resolveProvider(): {
       },
     };
   }
-  // Default: Gemini.
+  // Default: Gemini native REST.
   return {
     provider,
     cfg: {
       apiKey: process.env.GEMINI_API_KEY ?? null,
-      model: process.env.GEMINI_MODEL ?? "gemini-2.0-flash",
-      baseUrl:
-        process.env.GEMINI_BASE_URL ??
-        "https://generativelanguage.googleapis.com/v1beta/openai/",
-      label: "Gemini · gemini-2.0-flash",
+      model: process.env.GEMINI_MODEL ?? "gemini-flash-latest",
+      baseUrl: process.env.GEMINI_BASE_URL ?? GEMINI_DEFAULT_BASE,
+      label: "Gemini · gemini-flash-latest",
       keyEnv: "GEMINI_API_KEY",
     },
   };
 }
 
-async function callLLM(opts: {
-  question: string;
-  context: string;
-}): Promise<{ content?: string; error?: string; providerLabel?: string }> {
-  const { cfg } = resolveProvider();
-  if (!cfg.apiKey) {
-    return {
-      error: `Atlas Assistant is offline — add ${cfg.keyEnv} in the project's Keys/API keys tab to enable conversational answers.`,
-    };
-  }
+type LLMResult = {
+  content?: string;
+  error?: string;
+  providerLabel?: string;
+};
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
+type CallOpts = {
+  system: string;
+  user: string;
+  signal: AbortSignal;
+  /** Generation params per provider. Defaults applied if absent. */
+  temperature?: number;
+  maxOutputTokens?: number;
+};
 
+async function callGemini(
+  cfg: ProviderConfig,
+  opts: CallOpts,
+): Promise<LLMResult> {
+  const url = `${cfg.baseUrl.replace(/\/$/, "")}/${encodeURIComponent(cfg.model)}:generateContent`;
+  const body = {
+    systemInstruction: { parts: [{ text: opts.system }] },
+    contents: [{ role: "user", parts: [{ text: opts.user }] }],
+    generationConfig: {
+      temperature: opts.temperature ?? 0.1,
+      maxOutputTokens: opts.maxOutputTokens ?? 1500,
+    },
+  };
   try {
-    const res = await fetch(
-      `${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cfg.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: cfg.model,
-          temperature: 0.1,
-          max_tokens: 1500,
-          messages: [
-            {
-              role: "system",
-              content: `${SYSTEM_PROMPT}\n\n# Context\n${opts.context || "(empty — no assets loaded yet)"}`,
-            },
-            { role: "user", content: opts.question },
-          ],
-        }),
-        signal: controller.signal,
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-goog-api-key": cfg.apiKey!,
       },
-    );
-
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(
@@ -146,21 +157,118 @@ async function callLLM(opts: {
           : `Atlas Assistant is offline — upstream returned ${res.status}.`,
       };
     }
-
     const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+      }>;
     };
-    const content = data?.choices?.[0]?.message?.content ?? "";
-    return { content: String(content).trim(), providerLabel: cfg.label };
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+      data?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ??
+      "";
+    return { content: String(text).trim() };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[chatComplete] fetch error", msg);
+    console.error("[chatComplete] gemini error", msg);
     if (msg.includes("abort")) {
       return { error: "Atlas Assistant timed out. Try a sharper question." };
     }
     return {
       error: "Atlas Assistant is offline — couldn't reach the model.",
     };
+  }
+}
+
+async function callNebius(
+  cfg: ProviderConfig,
+  opts: CallOpts,
+): Promise<LLMResult> {
+  const url = `${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.apiKey!}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        temperature: opts.temperature ?? 0.1,
+        max_tokens: opts.maxOutputTokens ?? 1500,
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+      }),
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(
+        `[chatComplete] ${cfg.label} ${res.status}: ${detail.slice(0, 300)}`,
+      );
+      const isAuth = res.status === 401 || res.status === 403;
+      return {
+        error: isAuth
+          ? `Atlas Assistant is offline — ${cfg.keyEnv} was rejected by ${cfg.label}.`
+          : `Atlas Assistant is offline — upstream returned ${res.status}.`,
+      };
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data?.choices?.[0]?.message?.content ?? "";
+    return { content: String(content).trim() };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[chatComplete] nebius error", msg);
+    if (msg.includes("abort")) {
+      return { error: "Atlas Assistant timed out. Try a sharper question." };
+    }
+    return {
+      error: "Atlas Assistant is offline — couldn't reach the model.",
+    };
+  }
+}
+
+/**
+ * Common LLM entrypoint. Resolves the active provider and dispatches to the
+ * matching transport. Returns the model output as a single string, or a
+ * friendly error.
+ */
+async function callLLM(opts: {
+  system: string;
+  user: string;
+  /** Optional override for chat actions; default 1500 tokens is fine for
+   *  summarization-style prompts. The normalizeAddress action passes
+   *  600 (small structured JSON output). */
+  maxOutputTokens?: number;
+  /** Lower-temperature for strict JSON like the address normalizer. */
+  temperature?: number;
+}): Promise<LLMResult> {
+  const { provider, cfg } = resolveProvider();
+  if (!cfg.apiKey) {
+    return {
+      error: `Atlas Assistant is offline — add ${cfg.keyEnv} in the project's Keys/API keys tab to enable conversational answers.`,
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  const callOpts: CallOpts = {
+    system: opts.system,
+    user: opts.user,
+    signal: controller.signal,
+    temperature: opts.temperature,
+    maxOutputTokens: opts.maxOutputTokens,
+  };
+
+  try {
+    const result =
+      provider === "gemini"
+        ? await callGemini(cfg, callOpts)
+        : await callNebius(cfg, callOpts);
+    return { ...result, providerLabel: cfg.label };
   } finally {
     clearTimeout(timeout);
   }
@@ -179,7 +287,10 @@ export const chatComplete = action({
     context: v.string(),
   },
   handler: async (_ctx, args) => {
-    return await callLLM(args);
+    return await callLLM({
+      system: `${SYSTEM_PROMPT}\n\n# Context\n${args.context || "(empty — no assets loaded yet)"}`,
+      user: args.question,
+    });
   },
 });
 
@@ -269,9 +380,6 @@ function extractJsonObject(raw: string): Record<string, unknown> | null {
   return null;
 }
 
-/** Light sanity-check on a cleaned address field. We reject anything that
- *  looks like the model invented a street number we didn't pass in, or
- *  spelled the state wrong (must be exactly two letters). */
 function pickString(obj: Record<string, unknown>, key: string): string {
   const v = obj[key];
   return typeof v === "string" ? v.trim() : "";
@@ -298,13 +406,26 @@ export const normalizeAddress = action({
       .filter(Boolean)
       .join("\n");
 
-    const res = await callLLM({ question: user, context: NORMALIZER_SYSTEM_PROMPT });
+    const res = await callLLM({
+      system: NORMALIZER_SYSTEM_PROMPT,
+      user,
+      maxOutputTokens: 600,
+      temperature: 0,
+    });
     if (res.error || !res.content) {
-      return { ok: false, error: res.error ?? "Atlas Assistant could not clean the address.", providerLabel: res.providerLabel };
+      return {
+        ok: false,
+        error: res.error ?? "Atlas Assistant could not clean the address.",
+        providerLabel: res.providerLabel,
+      };
     }
     const obj = extractJsonObject(res.content);
     if (!obj) {
-      return { ok: false, error: "Atlas Assistant returned an unparseable address.", providerLabel: res.providerLabel };
+      return {
+        ok: false,
+        error: "Atlas Assistant returned an unparseable address.",
+        providerLabel: res.providerLabel,
+      };
     }
 
     const street = pickString(obj, "street");
@@ -312,24 +433,31 @@ export const normalizeAddress = action({
     const stateRaw = pickString(obj, "state");
     const state = stateRaw ? stateRaw.toUpperCase().slice(0, 2) : "";
     const postalcode = pickString(obj, "postalcode").slice(0, 5);
-    const confidenceRaw = (pickString(obj, "confidence") as
-      | "high"
-      | "medium"
-      | "low"
-      | "").toLowerCase();
+    const confidenceRaw = (
+      pickString(obj, "confidence") as "high" | "medium" | "low" | ""
+    ).toLowerCase();
 
-    // Sanity check: state must be 2 letters if present.
     if (state && state.length !== 2) {
-      return { ok: false, error: "State field wasn't 2 letters.", providerLabel: res.providerLabel };
+      return {
+        ok: false,
+        error: "State field wasn't 2 letters.",
+        providerLabel: res.providerLabel,
+      };
     }
-    // Sanity check: postalcode if present must be 5 digits.
     if (postalcode && !/^\d{5}$/.test(postalcode)) {
-      return { ok: false, error: "ZIP field wasn't 5 digits.", providerLabel: res.providerLabel };
+      return {
+        ok: false,
+        error: "ZIP field wasn't 5 digits.",
+        providerLabel: res.providerLabel,
+      };
     }
-    // We only consider normalization useful if at least one field changed
-    // OR the caller provided a non-empty original. Empty street → not ok.
     if (!street) {
-      return { ok: false, confidence: "low", error: "Could not recover a street line.", providerLabel: res.providerLabel };
+      return {
+        ok: false,
+        confidence: "low",
+        error: "Could not recover a street line.",
+        providerLabel: res.providerLabel,
+      };
     }
 
     return {

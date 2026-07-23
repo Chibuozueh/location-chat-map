@@ -751,7 +751,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
           {smartAssistant && (
             <>
               {" · "}narrations via{" "}
-              <span className="text-foreground/80">Gemini · gemini-2.0-flash</span>
+              <span className="text-foreground/80">Gemini · gemini-flash-latest</span>
             </>
           )}
         </div>
