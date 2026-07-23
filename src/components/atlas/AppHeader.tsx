@@ -26,20 +26,6 @@ export function AppHeader() {
             </div>
           </div>
         </Link>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/auth"
-            className="hidden rounded-full px-3 py-1.5 text-[12.5px] font-medium text-foreground/80 transition hover:text-foreground md:inline-flex"
-          >
-            Sign in
-          </Link>
-          <Link
-            to="/auth"
-            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-foreground shadow-card transition hover:bg-primary/95"
-          >
-            Explore Atlas
-          </Link>
-        </div>
       </div>
     </header>
   );
