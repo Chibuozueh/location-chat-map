@@ -39,27 +39,45 @@ function newId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-/** Build the Markdown context block fed to the LLM. Top-8 evidence only —
- *  larger payloads will hit model context limits. */
-function buildLlmContext(evidence: AssetEvidence[]): string {
-  if (!evidence.length) {
-    return "(empty — no assets matched the deterministic search yet)";
+/** Build a full Markdown table of ALL rows with ALL columns for the LLM.
+ *  This gives the model complete access to the dataset so it can answer
+ *  any question accurately without truncation. */
+function buildFullTableContext(rows: (LocationDoc | AtlasAsset)[]): string {
+  if (!rows.length) {
+    return "(empty — no assets loaded yet)";
   }
-  return evidence
-    .slice(0, 8)
-    .map((ev, i) => {
-      const parts: string[] = [`${i + 1}. ${ev.name}`];
-      if (ev.tagline) parts.push(`- Type: ${ev.tagline}`);
-      if (ev.addressLine) parts.push(`- Address: ${ev.addressLine}`);
-      if (ev.hoursToday) parts.push(`- Hours: ${ev.hoursToday}`);
-      if (ev.contactLine) parts.push(`- Contact: ${ev.contactLine}`);
-      if (ev.websiteLine) parts.push(`- Web: ${ev.websiteLine}`);
-      if (ev.servicesLine) parts.push(`- Services: ${ev.servicesLine}`);
-      if (ev.priceLine) parts.push(`- Price: ${ev.priceLine}`);
-      if (ev.ratingLine) parts.push(`- Rating: ${ev.ratingLine}`);
-      return parts.join("\n");
-    })
-    .join("\n\n");
+  const header = "| # | Name | Category | Tagline | Address | City | State | ZIP | Description | Services | Hours | Contact | Phone | Email | Website | Price | Notes |";
+  const sep = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|";
+  const body = rows.map((r: any, i) => {
+    const name = (r.name ?? r.assetNameOrOrganization ?? "").replace(/\|/g, "/");
+    const cat = (r.category ?? r.communityAssetType ?? "").replace(/\|/g, "/");
+    const tag = (r.tagline ?? "").replace(/\|/g, "/");
+    const addr = (r.address ?? "").replace(/\|/g, "/").replace(/\n/g, ", ");
+    const city = (r.city ?? "").replace(/\|/g, "/");
+    const state = (r.state ?? "").replace(/\|/g, "/");
+    const zip = (r.postalCode ?? r.zipCode ?? "").replace(/\|/g, "/");
+    const desc = (r.description ?? r.servicesResourcesAvailable ?? "").replace(/\|/g, "/").slice(0, 200);
+    const svc = (Array.isArray(r.services) ? r.services.join(", ") : (r.services ?? "")).replace(/\|/g, "/").slice(0, 150);
+    const hrs = formatHoursShort(r.hours);
+    const contact = (r.contactName ?? "").replace(/\|/g, "/");
+    const phone = (r.contactPhone ?? "").replace(/\|/g, "/");
+    const email = (r.contactEmail ?? "").replace(/\|/g, "/");
+    const web = (r.website ?? "").replace(/\|/g, "/");
+    const price = (r.priceLabel ?? (r.priceTier <= 0 ? "Free" : r.priceTier === 1 ? "Sliding-scale" : "Paid")).replace(/\|/g, "/");
+    const notes = (r.notes ?? r.notesObservations ?? "").replace(/\|/g, "/").slice(0, 150);
+    return `| ${i + 1} | ${name} | ${cat} | ${tag} | ${addr} | ${city} | ${state} | ${zip} | ${desc} | ${svc} | ${hrs} | ${contact} | ${phone} | ${email} | ${web} | ${price} | ${notes} |`;
+  }).join("\n");
+  return `FULL DATASET (${rows.length} assets)\n\n${header}\n${sep}\n${body}`;
+}
+
+/** Compact hours formatter for the table context. */
+function formatHoursShort(hrs: any): string {
+  if (!hrs) return "";
+  const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const today = days[new Date().getDay()];
+  const d = hrs[today];
+  if (!d || !d.open || d.open === "\u2014" || d.open === "-") return "Closed today";
+  return `${d.open}\u2013${d.close}`;
 }
 
 /** Strip the inline `**` markdown backing for plain text dedupe. */
@@ -455,7 +473,8 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
 
     if (!smartAssistant) return;
 
-    const ctx = buildLlmContext(lastEvidence);
+    const allRows = [...merged.mappable, ...merged.chatOnly] as (LocationDoc | AtlasAsset)[];
+    const ctx = buildFullTableContext(allRows);
     triggerLlm({ question: pendingQuestion, context: ctx })
       .then((res) => {
         if (res.providerLabel) setActiveProvider(res.providerLabel);
