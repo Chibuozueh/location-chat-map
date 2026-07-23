@@ -236,7 +236,24 @@ const ALIASES: Record<string, string[]> = {
     "active",
   ],
 
-  priceTier: ["price_tier", "price", "cost", "cost_tier", "fee"],
+  priceTier: [
+    "price_tier",
+    "price",
+    "cost",
+    "cost_tier",
+    "fee",
+    // User's HUD-style CSV uses a literal "Price/Affordability" column with
+    // text values like "Free", "Sliding-scale", "$5 per visit". We alias the
+    // column AND special-case its content to derive a numeric priceTier.
+    "affordability",
+    "price_affordability",
+    "price_afford",
+    "price_aff",
+    "affordable",
+    "pricing",
+    "cost_level",
+    "fee_level",
+  ],
 
   // Description is the hardest field to canonicalize because HUD/grant
   // spreadsheets use a zoo of column names for "what is this place / what do
@@ -851,7 +868,39 @@ function makeAddressFragment(get: (f: string) => string): AddressFragment {
 // Static Atlanta ZIP centroids — short-circuits the geocode cascade for
 // SW Atlanta HUD addresses, no network roundtrip required.
 export const ATLANTA_ZIP_CENTROIDS: Record<string, { lat: number; lng: number }> = {
+  // Atlanta-metro ZCTA centroids. Hand-curated from public ZCTA data so the
+  // geocoder can short-circuit to a known good coordinate for any HUD row
+  // that ships only a ZIP with an Atlanta-metro postal code. The exact
+  // spot within the zip still requires Nominatim for street-level accuracy;
+  // these coords let the marker land in the right neighborhood without a
+  // network roundtrip on Tier 4a.
+  "30002": { lat: 33.7723, lng: -84.3877 },
+  "30030": { lat: 33.7715, lng: -84.2988 },
+  "30032": { lat: 33.7361, lng: -84.2890 },
+  "30034": { lat: 33.6891, lng: -84.3299 },
+  "30060": { lat: 33.9522, lng: -84.5444 },
+  "30080": { lat: 33.8767, lng: -84.5047 },
+  "30126": { lat: 33.8486, lng: -84.5547 },
+  "30213": { lat: 33.6441, lng: -84.4486 },
+  "30236": { lat: 33.6755, lng: -84.3967 },
+  "30238": { lat: 33.4949, lng: -84.3874 },
+  "30260": { lat: 33.5841, lng: -84.4733 },
+  "30265": { lat: 33.3901, lng: -84.7033 },
+  "30268": { lat: 33.5340, lng: -84.7324 },
+  "30269": { lat: 33.3981, lng: -84.5723 },
+  "30273": { lat: 33.6280, lng: -84.4690 },
+  "30274": { lat: 33.5882, lng: -84.4734 },
+  "30276": { lat: 33.2785, lng: -84.6137 },
+  "30281": { lat: 33.5497, lng: -84.2071 },
+  "30288": { lat: 33.5905, lng: -84.3590 },
+  "30290": { lat: 33.4649, lng: -84.5875 },
+  "30291": { lat: 33.6808, lng: -84.4825 },
+  "30292": { lat: 33.4821, lng: -84.5461 },
+  "30294": { lat: 33.6495, lng: -84.3980 },
+  "30296": { lat: 33.5659, lng: -84.4479 },
+  "30297": { lat: 33.5841, lng: -84.4681 },
   "30303": { lat: 33.7537, lng: -84.3863 },
+  "30305": { lat: 33.8310, lng: -84.3830 },
   "30306": { lat: 33.7868, lng: -84.3590 },
   "30307": { lat: 33.7691, lng: -84.3380 },
   "30308": { lat: 33.7710, lng: -84.3777 },
@@ -865,10 +914,46 @@ export const ATLANTA_ZIP_CENTROIDS: Record<string, { lat: number; lng: number }>
   "30316": { lat: 33.7179, lng: -84.3339 },
   "30317": { lat: 33.7495, lng: -84.3122 },
   "30318": { lat: 33.7916, lng: -84.4472 },
+  "30319": { lat: 33.8441, lng: -84.3358 },
   "30324": { lat: 33.8205, lng: -84.3585 },
+  "30326": { lat: 33.8440, lng: -84.3611 },
+  "30327": { lat: 33.8726, lng: -84.4228 },
+  "30328": { lat: 33.9245, lng: -84.3786 },
+  "30329": { lat: 33.8360, lng: -84.3214 },
+  "30330": { lat: 33.7067, lng: -84.4343 },
   "30331": { lat: 33.6968, lng: -84.5326 },
+  "30332": { lat: 33.7763, lng: -84.4014 },
+  "30334": { lat: 33.7487, lng: -84.3878 },
   "30336": { lat: 33.7311, lng: -84.6533 },
   "30337": { lat: 33.6437, lng: -84.4611 },
+  "30338": { lat: 33.9529, lng: -84.3176 },
+  "30339": { lat: 33.9078, lng: -84.4225 },
+  "30340": { lat: 33.8994, lng: -84.2864 },
+  "30341": { lat: 33.9048, lng: -84.2992 },
+  "30342": { lat: 33.8810, lng: -84.3751 },
+  "30344": { lat: 33.6761, lng: -84.4577 },
+  "30345": { lat: 33.8521, lng: -84.2849 },
+  "30346": { lat: 33.9135, lng: -84.3406 },
+  "30349": { lat: 33.6223, lng: -84.4942 },
+  "30350": { lat: 33.9874, lng: -84.3366 },
+  "30354": { lat: 33.6654, lng: -84.3788 },
+  "30360": { lat: 33.9272, lng: -84.2808 },
+  "30363": { lat: 33.7900, lng: -84.3990 },
+  "31106": { lat: 33.7920, lng: -84.3306 },
+  "31107": { lat: 33.7720, lng: -84.3622 },
+  "31119": { lat: 33.7447, lng: -84.3944 },
+  "31126": { lat: 33.7941, lng: -84.3638 },
+  "31131": { lat: 33.7537, lng: -84.3863 },
+  "31136": { lat: 33.7910, lng: -84.4089 },
+  "31139": { lat: 33.8573, lng: -84.4527 },
+  "31141": { lat: 33.8762, lng: -84.2893 },
+  "31144": { lat: 34.0067, lng: -84.2968 },
+  "31145": { lat: 33.8521, lng: -84.3378 },
+  "31146": { lat: 33.9240, lng: -84.3370 },
+  "31150": { lat: 33.9854, lng: -84.3396 },
+  "31156": { lat: 33.8704, lng: -84.3122 },
+  "31192": { lat: 33.7698, lng: -84.3546 },
+  "31193": { lat: 33.7819, lng: -84.3886 },
 };
 
 export function importCsv(
@@ -936,7 +1021,20 @@ export function importCsv(
 
     const rating = risks(get("rating"), 0, 5, 4.0);
     const reviewCount = risks(get("reviewCount"), 0, 1_000_000, 0);
-    const priceTier = risks(get("priceTier"), 0, 2, 0);
+    // Price/Affordability cells commonly contain text ("Free",
+    // "Sliding-scale", "$5 per visit") rather than a numeric tier. Try
+    // the numeric path first; fall back to the text parser so the column
+    // is never silently dropped.
+    const rawPrice = get("priceTier");
+    const numericPrice =
+      typeof rawPrice === "number"
+        ? rawPrice
+        : rawPrice && /^-?\d+(?:\.\d+)?$/.test(rawPrice)
+          ? parseFloat(rawPrice)
+          : NaN;
+    const priceTier = Number.isFinite(numericPrice)
+      ? Math.max(0, Math.min(2, numericPrice))
+      : parsePriceTierText(rawPrice, 0);
     const openedYear = risks(get("openedYear"), 1700, 2100, new Date().getFullYear());
 
     const warnings: string[] = [];
@@ -948,6 +1046,21 @@ export function importCsv(
       Number.isFinite(latParsed) && Number.isFinite(lngParsed);
 
     const addr = makeAddressFragment(get);
+    // Normalize address components for downstream consumers (geocode
+    // cascade, chat search, atlas pin). State gets USPS-abbreviated,
+    // city/postal code have trailing punctuation stripped, and any
+    // leading highway prefix is removed (Nominatim returns cleaner hits
+    // when fed "Peachtree St NE" instead of "I-75 Exit 241: Peachtree").
+    const cleanStreet = stripHighwayPrefix(
+      stripUnit(addr.street).trim(),
+    );
+    const normAddr: AddressFragment = {
+      street: cleanStreet,
+      city: cleanCity(addr.city) || "Atlanta",
+      state: cleanState(addr.state) || "GA",
+      postalcode: cleanPostalCode(addr.postalcode),
+      country: addr.country || "USA",
+    };
     const doc: AtlasAsset = {
       _id: `imported:${slug}`,
       _creationTime: Date.now(),
@@ -959,11 +1072,11 @@ export function importCsv(
       reviewCount,
       priceTier,
       description: get("description"),
-      address: addr.street,
-      city: addr.city || "Atlanta",
-      state: addr.state || "GA",
-      country: addr.country || "USA",
-      postalCode: addr.postalcode,
+      address: normAddr.street,
+      city: normAddr.city || "Atlanta",
+      state: normAddr.state || "GA",
+      country: normAddr.country || "USA",
+      postalCode: normAddr.postalcode,
       lat: hasCoords ? latParsed : NaN,
       lng: hasCoords ? lngParsed : NaN,
       hours: defaultHours(),
@@ -988,7 +1101,7 @@ export function importCsv(
     }
 
     // PO Box: skip the geocode cascade entirely. Still searchable in chat.
-    if (isPoBoxOnly(addr.street)) {
+    if (isPoBoxOnly(normAddr.street)) {
       warnings.push("PO Box address \u2014 no map pin");
       doc.coordAccuracy = undefined;
       chatOnly.push(row);
@@ -996,7 +1109,7 @@ export function importCsv(
     }
 
     // No street and no postal code → also can't geocode.
-    if (!addr.street && !addr.postalcode) {
+    if (!normAddr.street && !normAddr.postalcode) {
       warnings.push("no street or postal code for geocoding");
       doc.needsGeocode = false;
       doc.coordAccuracy = undefined;
@@ -1006,7 +1119,7 @@ export function importCsv(
 
     warnings.push("awaiting geocoding");
     doc.needsGeocode = true;
-    doc.geoKey = geoKeyFor(addr);
+    doc.geoKey = geoKeyFor(normAddr);
     pending.push(row);
   }
 
@@ -1018,4 +1131,144 @@ export function importCsv(
     rejected,
     filename,
   };
+}
+
+// ----- Affordability text -> numeric priceTier -----------------------------
+
+/**
+ * Map a textual "Price/Affordability" cell to a numeric priceTier (0..2).
+ * Recognizes "Free", "Sliding-scale", "Donation", "$5 per visit", etc.
+ */
+export function parsePriceTierText(
+  s: string | null | undefined,
+  fallback = 0,
+): number {
+  if (!s) return fallback;
+  const t = s.trim().toLowerCase();
+  if (!t) return fallback;
+  if (/\bfree\b|no cost|no fee|\bgrat(is|uit)\b/.test(t)) return 0;
+  if (/\bslid(e|ing)\b|sliding[- ]scale|low cost|donation|\bscholar/.test(t)) {
+    return 1;
+  }
+  if (
+    /\bpaid\b|\bfee\b|\bmembership\b|\bticket\b|\bsubscription\b|\brequired\b/.test(
+      t,
+    )
+  ) {
+    const dollar = t.match(/\$(\d+(?:\.\d+)?)/g);
+    if (dollar && dollar.every((m) => /^[$]0(\.0+)?$/.test(m))) return 0;
+    return 2;
+  }
+  const amt = t.match(/\$(\d+(?:\.\d+)?)/);
+  if (amt) {
+    const v = parseFloat(amt[1]);
+    if (v <= 0) return 0;
+    if (v <= 15) return 1;
+    return 2;
+  }
+  return fallback;
+}
+
+// ----- City / State / Zip normalization -----------------------------------
+
+/** USPS state abbreviation spelled out, including common misspellings. */
+const STATE_NAME_TO_ABBREV: Record<string, string> = {
+  alabama: "AL",
+  alaska: "AK",
+  arizona: "AZ",
+  arkansas: "AR",
+  california: "CA",
+  colorado: "CO",
+  connecticut: "CT",
+  delaware: "DE",
+  florida: "FL",
+  georgia: "GA",
+  hawaii: "HI",
+  idaho: "ID",
+  illinois: "IL",
+  indiana: "IN",
+  iowa: "IA",
+  kansas: "KS",
+  kentucky: "KY",
+  louisiana: "LA",
+  maine: "ME",
+  maryland: "MD",
+  massachusetts: "MA",
+  michigan: "MI",
+  minnesota: "MN",
+  mississippi: "MS",
+  missouri: "MO",
+  montana: "MT",
+  nebraska: "NE",
+  nevada: "NV",
+  "new hampshire": "NH",
+  "new jersey": "NJ",
+  "new mexico": "NM",
+  "new york": "NY",
+  "north carolina": "NC",
+  "north dakota": "ND",
+  ohio: "OH",
+  oklahoma: "OK",
+  oregon: "OR",
+  pennsylvania: "PA",
+  "rhode island": "RI",
+  "south carolina": "SC",
+  "south dakota": "SD",
+  tennessee: "TN",
+  texas: "TX",
+  utah: "UT",
+  vermont: "VT",
+  virginia: "VA",
+  washington: "WA",
+  "west virginia": "WV",
+  wisconsin: "WI",
+  wyoming: "WY",
+  // Common HUD-sheet typos that show up in Atlanta datasets.
+  georiga: "GA",
+  goriga: "GA",
+  georgie: "GA",
+  pensylvania: "PA",
+  califronia: "CA",
+  califoria: "CA",
+  flordia: "FL",
+};
+
+/** Trim a city cell, dropping trailing punctuation Excel often emits. */
+export function cleanCity(s: string | null | undefined): string {
+  if (!s) return "";
+  return s
+    .trim()
+    .replace(/\s*[,.;:]\s*$/g, "")
+    .replace(/\s{2,}/g, " ");
+}
+
+/** Normalize a state cell to USPS 2-letter abbrev ("Georgia" -> "GA"). */
+export function cleanState(s: string | null | undefined): string {
+  if (!s) return "";
+  let t = s.trim().replace(/\s*[,.;:]\s*$/g, "").replace(/\s{2,}/g, " ");
+  if (!t) return "";
+  if (/^[A-Za-z]{2}$/.test(t)) return t.toUpperCase();
+  return STATE_NAME_TO_ABBREV[t.toLowerCase()] ?? t.slice(0, 2).toUpperCase();
+}
+
+/** Trim a zip to 5-digit form with optional -4. */
+export function cleanPostalCode(s: string | null | undefined): string {
+  if (!s) return "";
+  const t = s.trim();
+  const m = t.match(/(\d{5})(?:[- ]?(\d{4}))?/);
+  if (!m) return t;
+  return m[2] ? `${m[1]}-${m[2]}` : m[1];
+}
+
+/**
+ * Strip leading highway/Interstate prefixes so Nominatim gets the
+ * canonical street name. Common in HUD sheets with cross-street rows.
+ */
+export function stripHighwayPrefix(street: string): string {
+  return street
+    .replace(
+      /^\s*(?:i[-\s]?\d+|interstate\s+\d+|us\s+\d+|u\.?s\.?\s+\d+|state\s+(?:route|road|hwy|hwy\.?)|sr\s+\d+|ga\s+\d+|highway\s+\d+|hwy\.?\s+\d+)\b\.?\s*/i,
+      "",
+    )
+    .trim();
 }
