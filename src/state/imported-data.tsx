@@ -211,13 +211,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // Cancellation flag so an external `clear()` aborts the loop cleanly.
   const cancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
-  // Saved off `state.chatOnly` (PO Box / address-only rows) at the start
-  // of each import. The pre-validation gate keeps `state.chatOnly` empty
-  // so neither the map's cluster pass nor the chat's search sees any
-  // imported data; the post-loop `flush` restores these once validation
-  // completes.
-  const heldChatOnlyRef = useRef<AtlasAsset[]>([]);
-
   const importFromFile = useCallback(async (file: File) => {
     setImporting(true);
     cancelRef.current.cancelled = true;
@@ -277,18 +270,16 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         doc: r.doc,
       }));
       const chatOnly = summary.chatOnly.map((r) => r.doc);
-      // Saved for the post-loop flush — the gate keeps `chatOnly` empty
-      // until the pre-validation pass completes, then restores it.
-      heldChatOnlyRef.current = chatOnly;
-
-      const gateOpen = pendingCount === 0;
 
       setState({
-        // Hide all rows during the gate so neither map nor chat can paint
-        // any imported data until the AI pre-validation finishes.
-        rows: gateOpen ? ready : [],
+        // Rows already carrying lat/lng land in `rows` immediately.
+        // Address-only / PO-Box rows land in `chatOnly` immediately too.
+        // Pending rows paint dots one-by-one as the geocode loop runs
+        // (see the per-row setState below), so the map never sits empty
+        // during the pre-validation pass.
+        rows: ready,
         pending,
-        chatOnly: gateOpen ? chatOnly : [],
+        chatOnly,
         failed: [],
         filename: summary.filename,
         importedAt: Date.now(),
@@ -311,7 +302,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           active: pendingCount > 0,
         },
         source,
-        released: gateOpen,
+        released: true,
       });
 
       cancelRef.current.cancelled = false;
@@ -320,7 +311,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       const placed = readyCount + chatOnlyCount;
       const pendingNote =
         pendingCount > 0
-          ? ` · pre-validating ${pendingCount} address${pendingCount === 1 ? "" : "es"} via MapChat`
+          ? ` · ${pendingCount} more address${pendingCount === 1 ? "" : "es"} plotting…`
           : "";
       const chatOnlyNote =
         chatOnlyCount > 0 ? ` · ${chatOnlyCount} address-only` : "";
@@ -588,58 +579,14 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     const snapRetryNonce = state.retryNonce;
 
     const run = async () => {
-      // Local accumulators. Stays empty for retry passes whose `state.rows`
-      // already has rows visible to the user — those flush inline below in
-      // the inner setState. For the INITIAL pre-validation pass (when
-      // `state.rows` started empty), this is what gets flushed at the end.
-      const placedAcc: AtlasAsset[] = [];
-      const failedAcc: Array<{
-        id: string;
-        reason: string;
-        doc: AtlasAsset;
-      }> = [];
-      const consumedIds = new Set<string>();
-
       /**
-       * Single cancel-aware flush point. Called at end-of-pass to release
-       * the validated set to the map + chat, or on cancel to leave the
-       * state untouched (the user explicitly aborted).
+       * Progressive reveal: each successful row is appended to `state.rows`
+       * in the per-row setState below so the map starts plotting dots as
+       * soon as the first row clears geocoding. Failed rows are appended
+       * to `state.failed` so the Retry chip appears immediately too. The
+       * loop no longer needs a post-pass flush since `state.rows` /
+       * `state.failed` stay in sync row-by-row.
        */
-      const flush = (placed: AtlasAsset[], failed: typeof failedAcc) => {
-        setState((prev) => {
-          if (cancel.cancelled) return prev;
-          if (prev.importedAt !== snapImportedAt) return prev;
-          if (prev.retryNonce !== snapRetryNonce) return prev;
-          // Restore the held chatOnly (PO Box / address-only) rows now
-          // that every pending row has been processed by MapChat. Retry
-          // passes never touch chatOnly (it was already restored on the
-          // initial flush); heldChatOnlyRef stays empty until the next
-          // importFromText.
-          const restoreChatOnly = heldChatOnlyRef.current;
-          heldChatOnlyRef.current = [];
-          if (!placed.length && !failed.length && !restoreChatOnly.length) {
-            return prev.released
-              ? prev
-              : {
-                  ...prev,
-                  chatOnly: restoreChatOnly,
-                  released: true,
-                  progress: { ...prev.progress, active: false },
-                };
-          }
-          return {
-            ...prev,
-            rows: [...prev.rows, ...placed],
-            failed: [...prev.failed, ...failed],
-            chatOnly: restoreChatOnly,
-            progress: {
-              ...prev.progress,
-              failed: prev.progress.failed + failed.length,
-            },
-            released: true, // gate opens on the first flush
-          };
-        });
-      };
 
       for (let i = 0; i < state.pending.length; i++) {
         if (cancel.cancelled) return;
@@ -811,30 +758,39 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
         if (cancel.cancelled) return;
 
-        // Accumulate locally for the flush.
-        if (coord && accuracy) {
-          placedAcc.push({
-            ...doc,
-            lat: coord.lat,
-            lng: coord.lng,
-            needsGeocode: false,
-            coordAccuracy: accuracy,
-          });
-        } else {
-          failedAcc.push({
-            id: item.id,
-            reason: key
-              ? `Could not locate "${doc.address}, ${doc.city}, ${doc.state} ${doc.postalCode}".`
-              : "Row has no street or ZIP for geocoding.",
-            doc,
-          });
-        }
-        consumedIds.add(item.id);
+        // Decide this row's destination. Successful rows go into
+        // `state.rows` immediately so the map plots them as they come in;
+        // failed rows land in `state.failed` so the Retry chip surfaces
+        // the moment geocoding is exhausted.
+        const placedDoc: AtlasAsset | null =
+          coord && accuracy
+            ? {
+                ...doc,
+                lat: coord.lat,
+                lng: coord.lng,
+                needsGeocode: false,
+                coordAccuracy: accuracy,
+              }
+            : null;
+        const failedItem: {
+          id: string;
+          reason: string;
+          doc: AtlasAsset;
+        } | null =
+          !placedDoc
+            ? {
+                id: item.id,
+                reason: key
+                  ? `Could not locate "${doc.address}, ${doc.city}, ${doc.state} ${doc.postalCode}".`
+                  : "Row has no street or ZIP for geocoding.",
+                doc,
+              }
+            : null;
 
-        // Per-row setState only updates progress + consumes one slot from
-        // `state.pending`. The actual rows / failed are flushed at the end
-        // so the pre-validation gate stays closed until EVERY pending row
-        // has been processed.
+        // Per-row setState appends to `state.rows` / `state.failed` and
+        // consumes one slot from `state.pending` in the same commit, so
+        // the map + chat update incrementally as the loop runs instead of
+        // waiting for the entire pass to complete.
         setState((prev) => {
           if (cancel.cancelled) return prev;
           if (prev.importedAt !== snapImportedAt) return prev;
@@ -846,6 +802,10 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           const done = prev.progress.done + 1;
           return {
             ...prev,
+            rows: placedDoc ? [...prev.rows, placedDoc] : prev.rows,
+            failed: failedItem
+              ? [...prev.failed, failedItem]
+              : prev.failed,
             pending: remainingPending,
             progress: {
               ...prev.progress,
@@ -898,9 +858,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Post-loop flush. Snapshot checks inside `flush()` guard against
-      // races where the user cleared or re-imported mid-pass.
-      flush(placedAcc, failedAcc);
+      // No post-loop flush needed — every row was already appended to
+      // `state.rows` / `state.failed` by the per-row setState above, so
+      // the map and chat stay in sync row-by-row. The last iteration's
+      // setState will also flip `progress.active` to false once `pending`
+      // drains to zero.
     };
 
     void run();
