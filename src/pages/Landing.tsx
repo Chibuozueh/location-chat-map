@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { LayoutGrid, Map as MapIcon, Minimize2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
@@ -19,9 +19,12 @@ import type { LocationDoc } from "@/components/atlas/types";
 import type { AtlasAsset } from "@/lib/csv-import";
 
 function LandingInner() {
-  const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
+  // The Convex `list` query returns the embedded `SEED_LOCATIONS` already
+  // translated into the canonical `AtlasAsset` shape, so we can use it
+  // directly without an extra client-side adapter.
+  const seeded =
+    (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
   const top = useQuery(api.locations.topPicks);
-  const seedMut = useMutation(api.locations.seed);
   const { state: importedState } = useImportedData();
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -31,34 +34,6 @@ function LandingInner() {
    *  at ~60% larger perceived area (full width + taller height). */
   const [mapFocus, setMapFocus] = useState(false);
   const exploreRef = useRef<HTMLDivElement | null>(null);
-
-  // Auto-seed once on first mount if the table is empty, OR if the existing
-  // rows are from the previous Portland-coffee seed (detected by old slugs).
-  const migratedRef = useRef(false);
-  useEffect(() => {
-    if (migratedRef.current) return;
-    if (seeded === undefined) return;
-    migratedRef.current = true;
-    const oldSlugs = new Set([
-      "stumptown-hawthorne",
-      "heart-burnside",
-      "coava-pearl",
-      "proud-coffee-mississippi",
-      "sterling-coffee",
-      "case-study-alberta",
-      "teiph-matrix",
-      "sisters-bakery",
-      "floyd-coffee",
-      "good-coffee-broadway",
-      "roseway-roasters",
-      "verdant-tea",
-    ]);
-    const needsMigration =
-      seeded.length === 0 || seeded.some((l) => oldSlugs.has(l.slug));
-    if (needsMigration) {
-      seedMut({ force: seeded.length > 0 }).catch(() => {});
-    }
-  }, [seeded, seedMut]);
 
   const hasAnyImport =
     importedState.rows.length +

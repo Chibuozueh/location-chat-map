@@ -1,19 +1,17 @@
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { AtlasAsset } from "@/lib/csv-import";
 import type { AssetEvidence } from "@/lib/atlas-search";
 
-export type LocationDoc = Doc<"locations"> & {
-  /**
-   * Optional contact / outreach fields. These are populated by uploaded CSV
-   * rows (see AtlasAsset) and may be `undefined` on the seeded default
-   * rows. Kept on LocationDoc so LocationCard + MapView can read them off
-   * either the seeded or imported asset without conditional casts.
-   */
-  website?: string;
-  socialMedia?: string;
-  contactName?: string;
-  contactPhone?: string;
-  contactEmail?: string;
-};
+/**
+ * Render-shape of a single atlas entry. The atlas no longer persists any
+ * Convex-backed locations table — the canonical sources are either the
+ * embedded `SEED_LOCATIONS` in convex/locations.ts (translated to
+ * `AtlasAsset` shape server-side) or a user-uploaded CSV (translated to
+ * `AtlasAsset` shape client-side via csv-import.importCsv). Either path
+ * produces an `AtlasAsset`; re-exporting it as `LocationDoc` keeps every
+ * existing renderer (`LocationCard`, `MapView`, `LocationGrid`,
+ * `ChatPanel`, …) working without touching their field-access code.
+ */
+export type LocationDoc = AtlasAsset;
 
 export const PRICE_SYMBOL: Record<number, string> = {
   0: "Free",

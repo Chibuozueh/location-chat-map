@@ -32,38 +32,14 @@ const schema = defineSchema(
 
       role: v.optional(roleValidator),
     }).index("email", ["email"]),
-
-    locations: defineTable({
-      assetNameOrOrganization: v.string(),
-      communityAssetType: v.string(),
-      address: v.string(),
-      city: v.string(),
-      state: v.string(),
-      zipCode: v.string(),
-
-      website: v.string(),
-      socialMedia: v.string(),
-
-      keyContact: v.string(),
-      contactPhone: v.string(),
-      contactEmail: v.string(),
-
-      servicesResourcesAvailable: v.string(),
-      priceAffordability: v.string(),
-      notesObservations: v.string(),
-    })
-      .index("by_asset_name", ["assetNameOrOrganization"])
-      .index("by_asset_type", ["communityAssetType"])
-      .index("by_city", ["city"])
-      .index("by_state", ["state"])
-      .searchIndex("search_asset_name", {
-        searchField: "assetNameOrOrganization",
-        filterFields: ["communityAssetType", "city"],
-      }),
   },
-  {
-    schemaValidation: false,
-  },
+  // The atlas's "locations" data is intentionally NOT stored in Convex:
+  // the canonical sources are either the embedded SEED_LOCATIONS in
+  // convex/locations.ts (translated to AtlasAsset shape on the fly) or
+  // a user-uploaded CSV that flows through the client-side importer in
+  // src/state/imported-data.tsx. This keeps Convex as the auth backend
+  // only and avoids the schema/type mismatch that arises from trying to
+  // shoe-horn raw spreadsheet column names into a fixed-shape table.
 );
 
 export default schema;

@@ -20,6 +20,7 @@ import {
   type CoordAccuracy,
   type ImportSummary,
   importCsv,
+  parsePriceTierText,
 } from "@/lib/csv-import";
 import type { LocationDoc } from "@/components/atlas/types";
 import { api } from "@/convex/_generated/api";
@@ -114,47 +115,6 @@ const EMPTY: ImportedState = {
   source: null,
   released: true,
 };
-
-/** Filenames probed (in order) for the static `/data/*.csv` fallback.
- *  Vite serves everything in `public/` from the project root, so these
- *  resolve to `/data/atlas.csv` etc. The first one that returns 200 OK
- *  wins once the Convex-storage / URL paths are exhausted. */
-const NATIVE_CSV_PATHS = ["/data/atlas.csv", "/data/assets.csv"] as const;
-
-/**
- * Reference to the project's reference CSV. Resolved in this order:
- *
- *   1. `VITE_NATIVE_CSV_URL` — a full `http(s)://` URL pasted from a
- *      Freebuff / Vercel Blob / S3 data tab. Freebuff hands back opaque
- *      `csk-…` tokens that are NOT Convex `_storage` IDs, so this is the
- *      only reliable way to reference them today.
- *   2. `VITE_NATIVE_CSV_STORAGE_ID` — a 32-character Convex `_storage`
- *      id used to be the canonical format. Kept for backward compat.
- *   3. Otherwise we skip the storage path entirely and the static
- *      `/data/*.csv` chain takes over.
- *
- * The native CSV (URL or ID) is baked into the localStorage cache key
- * so re-uploading the reference file (which produces a new id) auto-
- * invalidates older cache entries without an explicit `clear()`.
- */
-const NATIVE_CSV_REF: string | null = (() => {
-  const fromUrl = import.meta.env?.VITE_NATIVE_CSV_URL;
-  if (typeof fromUrl === "string" && fromUrl.trim().length > 0) {
-    return fromUrl.trim();
-  }
-  const fromId = import.meta.env?.VITE_NATIVE_CSV_STORAGE_ID;
-  if (typeof fromId === "string" && fromId.trim().length > 0) {
-    return fromId.trim();
-  }
-  return null;
-})();
-
-/** Cache key for the cached native CSV. Uses the reference verbatim so
- *  re-uploading the reference (and getting a fresh id) auto-invalidates
- *  the older snapshot. */
-const NATIVE_CACHE_KEY = `atlas.nativeCsv.v2.${
-  NATIVE_CSV_REF ?? "static"
-}`;
 
 type ImportedContextValue = {
   state: ImportedState;
@@ -328,117 +288,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Resolve the project's reference CSV into a public URL. Result is a
-   * `string` when the reference was a URL (passed through) or a Convex
-   * storage ID that resolved. `null` means the reference was an
-   * unrecognised token (e.g. `csk-…` Freebuff blob); the client falls
-   * through to the static `/data/*.csv` chain and toasts the user. The
-   * query stays disabled when there's no reference at all, so a fresh
-   * install doesn't burn a Convex round-trip.
-   *
-   * NOTE: this query is intentionally about the native CSV's URL, NOT
-   * about which provider answers the chat. The map's AI normalizer
-   * (`callAddressNormalizer` in convex/chatComplete.ts) uses
-   * `CEREBRAS_API_KEY` only and never touches the chat Gemini key — so a noisy
-   * CSV import can't starve the conversational chat.
+   * The atlas's canonical data lives inside `convex/locations.ts`
+   * (`SEED_LOCATIONS`) and is returned to us already-translated via
+   * `api.locations.list`. There is no per-environment CSV fetch to do
+   * here, so this provider is now strictly a placeholder for
+   * future user-upload flows.
    */
-  const nativeStorageUrl = useQuery(
-    api.nativeCsv.getUrl,
-    NATIVE_CSV_REF
-      ? { storageId: NATIVE_CSV_REF }
-      : "skip",
-  );
-
-  /**
-   * Probe the canonical native CSV sources and return the first one with
-   * non-empty content. Order:
-   *   1. Convex storage (project data-panel upload) — preferred source.
-   *   2. Static `/data/atlas.csv` then `/data/assets.csv` (Vite serves
-   *      anything under `public/` from the project root).
-   * Returns null when no source has a usable file.
-   *
-   * If the storage file is removed (e.g. the user cleared the data tab)
-   * the cache entry is evicted so the next session shows the fallback or
-   * the curated defaults rather than the orphaned snapshot.
-   */
-  const fetchNativeCsv = useCallback(async (): Promise<{
-    text: string;
-    filename: string;
-  } | null> => {
-    // 1. Convex storage
-    if (nativeStorageUrl) {
-      try {
-        const res = await fetch(nativeStorageUrl, { cache: "no-store" });
-        if (res.ok) {
-          const text = await res.text();
-          if (text && text.trim()) {
-            return { text, filename: "atlas.csv" };
-          }
-        } else if (res.status === 404) {
-          try {
-            window.localStorage.removeItem(NATIVE_CACHE_KEY);
-          } catch {
-            /* ignore */
-          }
-        } else {
-          console.warn("[nativeCsv] storage fetch non-ok:", res.status);
-        }
-      } catch (err) {
-        console.warn("[nativeCsv] storage fetch threw", err);
-      }
-    }
-    // 2. Static files under /data
-    for (const path of NATIVE_CSV_PATHS) {
-      try {
-        const res = await fetch(path, { cache: "no-store" });
-        if (!res.ok) continue;
-        const text = await res.text();
-        if (!text || !text.trim()) continue;
-        const filename = path.split("/").pop() || path;
-        return { text, filename };
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }, [nativeStorageUrl]);
-
-  /**
-   * Hydrate from `localStorage` so the atlas appears instantly on
-   * subsequent visits while the in-flight native fetch + parse runs in
-   * the background. If the cache is stale or missing, we silently fall
-   * through to the network fetch.
-   */
-  const hydrateFromCache = useCallback((): boolean => {
-    if (typeof window === "undefined") return false;
-    try {
-      const raw = window.localStorage.getItem(NATIVE_CACHE_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as {
-        text: string;
-        filename: string;
-        cachedAt: number;
-      };
-      if (!parsed?.text) return false;
-      // Fire-and-forget; setState inside importFromText handles UI.
-      void importFromText(parsed.text, parsed.filename, "native");
-      try {
-        window.localStorage.setItem(
-          NATIVE_CACHE_KEY,
-          JSON.stringify({
-            ...parsed,
-            cachedAt: Date.now(),
-          }),
-        );
-      } catch {
-        /* quota — ignore */
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }, [importFromText]);
-
   const clear = useCallback(() => {
     cancelRef.current.cancelled = true;
     setState((prev) => {
@@ -448,79 +303,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     });
     coordCacheRef.current.clear();
     normalizeCacheRef.current.clear();
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.removeItem(NATIVE_CACHE_KEY);
-      } catch {
-        /* ignore */
-      }
-    }
   }, []);
-
-  /**
-   * Native auto-loader: on first mount, hydrate from localStorage
-   * (instant) and try to fetch a fresher copy from `public/data/`
-   * (background). User-uploaded files take precedence — we never
-   * overwrite an active user import.
-   *
-   * When a reference is configured but the storage query resolves to
-   * `null` (the user's token — e.g. `csk-…` — is not a Convex `_storage`
-   * id nor a URL), we toast a clear "paste the full URL" hint instead
-   * of silently falling back. The fallback chain still kicks in
-   * behind it for the static `/data/*.csv` files.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // 1. Instant: paint from the local cache if we have one.
-      hydrateFromCache();
-
-      // 2. Background: probe the canonical native paths and refresh.
-      try {
-        const fetched = await fetchNativeCsv();
-        if (cancelled) return;
-        if (!fetched) {
-          if (NATIVE_CSV_REF && nativeStorageUrl === null) {
-            // We configured a reference but the storage query resolved
-            // to null — that means the token isn't a Convex storage id.
-            // Toast the action the user needs to take.
-            toast(
-              "Native CSV reference didn't resolve. Paste the full URL in VITE_NATIVE_CSV_URL (or upload the file in the data tab and use VITE_NATIVE_CSV_STORAGE_ID with a real Convex _storage id).",
-              { duration: 12_000 },
-            );
-          }
-          return;
-        }
-        // Don't clobber a manual upload the user just made.
-        setState((prev) => {
-          if (prev.source === "upload" && prev.rows.length > 0) return prev;
-          // Cache the raw text + filename so the next visit hydrates instantly.
-          if (typeof window !== "undefined") {
-            try {
-              window.localStorage.setItem(
-                NATIVE_CACHE_KEY,
-                JSON.stringify({
-                  text: fetched.text,
-                  filename: fetched.filename,
-                  cachedAt: Date.now(),
-                }),
-              );
-            } catch {
-              /* quota — ignore */
-            }
-          }
-          // Run through the shared import pipeline.
-          void importFromText(fetched.text, fetched.filename, "native");
-          return prev;
-        });
-      } catch (err) {
-        console.warn("[nativeCsv] fetch failed", err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchNativeCsv, hydrateFromCache, importFromText, nativeStorageUrl]);
 
   // Re-run the cascade on every previously-failed row. We move the failed
   // entries back into pending, reset the failed counter, and bump
@@ -939,6 +722,90 @@ export function clusterKeyOf(a: Pick<AnyAsset, "address" | "city" | "state" | "p
   return [norm(a.address), norm(a.city), norm(a.state), norm(a.postalCode)]
     .filter(Boolean)
     .join("|");
+}
+
+/**
+ * Working-hours template applied to every seed row. The embedded SEED_LOCATIONS
+ * in convex/locations.ts don't ship hourly data, but the renderer always
+ * expects the shape so the chat panel can ask "open now?" without crashing.
+ * We use a neutral "—" token so `isOpenAt()` returns false (correctly
+ * surfacing the row as closed) while keeping the type checker happy.
+ */
+const SEED_DEFAULT_HOURS: AtlasAsset["hours"] = {
+  mon: { open: "—", close: "—" },
+  tue: { open: "—", close: "—" },
+  wed: { open: "—", close: "—" },
+  thu: { open: "—", close: "—" },
+  fri: { open: "—", close: "—" },
+  sat: { open: "—", close: "—" },
+  sun: { open: "—", close: "—" },
+};
+
+/**
+ * Translate the CSV-shape rows the user keeps in `src/convex/locations.ts`
+ * into the canonical AtlasAsset shape the rest of the app reads. The
+ * schema intentionally stores raw spreadsheet column names
+ * (`assetNameOrOrganization`, `communityAssetType`, `zipCode`, etc.) so
+ * the same source file mirrors the HUD-style spreadsheet verbatim, but
+ * the renderer needs the friendly fields (`name`, `category`,
+ * `postalCode`, `lat`, `lng`, `coordAccuracy`, `priceTier`, …). This
+ * adapter runs client-side, uses the hand-coded lat/lng already on the
+ * embedded rows, and does not call any geocoder — so the embedded
+ * "native" data lands on the map instantly with no token cost.
+ *
+ * Empty cells are tolerated: missing contact / website / coords produce
+ * `undefined` (rather than empty strings) so the LocationCard can hide
+ * the phone / email / web rows entirely. The priceTier uses the same
+ * "Free / Sliding / Paid" text classifier as the upload importer, so
+ * "Free" and "free" both map to tier 0.
+ */
+export function seedLocationsToAtlasAssets(rows: Array<any>): AtlasAsset[] {
+  return rows.map((r) => {
+    const lat =
+      typeof r.lat === "number" && Number.isFinite(r.lat) ? r.lat : NaN;
+    const lng =
+      typeof r.lng === "number" && Number.isFinite(r.lng) ? r.lng : NaN;
+    const services = (r.servicesResourcesAvailable ?? "").toString().trim();
+    const notes = (r.notesObservations ?? "").toString().trim();
+    // Concatenate the user-facing "Services / Resources Available" and the
+    // "Notes & Observations" so the long-form description the chat surfaces
+    // contains both. We omit either side when empty to avoid dangling
+    // blank paragraphs.
+    const description = [services, notes].filter(Boolean).join("\n\n");
+    const slug = r.slug ?? "";
+    return {
+      _id: `seeded:${slug}`,
+      _creationTime: 0,
+      slug,
+      name: r.assetNameOrOrganization ?? "",
+      tagline: r.communityAssetType ?? "",
+      category: (r.communityAssetType ?? "community-center")
+        .toString()
+        .toLowerCase(),
+      rating: 0,
+      reviewCount: 0,
+      priceTier: parsePriceTierText(r.priceAffordability ?? "", 0),
+      description,
+      address: r.address ?? "",
+      city: r.city ?? "Atlanta",
+      state: r.state ?? "GA",
+      country: "USA",
+      postalCode: r.zipCode ?? "",
+      lat,
+      lng,
+      hours: SEED_DEFAULT_HOURS,
+      features: [],
+      openedYear: new Date().getFullYear(),
+      signatureDrink: "—",
+      website: r.website || undefined,
+      socialMedia: r.socialMedia || undefined,
+      contactName: r.keyContact || undefined,
+      contactPhone: r.contactPhone || undefined,
+      contactEmail: r.contactEmail || undefined,
+      needsGeocode: false,
+      coordAccuracy: r.coordAccuracy ?? (Number.isFinite(lat) ? "exact" : undefined),
+    } satisfies AtlasAsset;
+  });
 }
 
 /**
