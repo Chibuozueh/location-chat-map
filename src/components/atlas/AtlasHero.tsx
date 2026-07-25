@@ -12,6 +12,10 @@ export function AtlasHero(props: {
   onExploreAssets: () => void;
   /** Whether the focused-map mode is currently active. */
   mapFocus: boolean;
+  /** Whether the open-now filter is active. */
+  openNowFilter?: boolean;
+  /** Toggles the open-now filter on/off. */
+  onToggleOpenNow?: () => void;
 }) {
   const {
     uploadedCount,
@@ -20,6 +24,8 @@ export function AtlasHero(props: {
     onExplore,
     onExploreAssets,
     mapFocus,
+    openNowFilter = false,
+    onToggleOpenNow,
   } = props;
   // Native (seeded / curated) asset count — used as the fallback when no
   // CSV has been uploaded yet so the hero always reflects a real total.
@@ -106,7 +112,30 @@ export function AtlasHero(props: {
               uploadedCount={uploadedCount}
               nativeCount={nativeCount}
             />
-            <Stat label="open now" value={openNow} />
+            <button
+              type="button"
+              onClick={onToggleOpenNow}
+              aria-pressed={openNowFilter}
+              className={`rounded-2xl border px-3 py-3 shadow-pop backdrop-blur transition text-left ${
+                openNowFilter
+                  ? "border-[#6e0e1e] bg-[#6e0e1e0d] ring-2 ring-[#6e0e1e33]"
+                  : "border-border/60 bg-background/70 hover:border-accent/60 hover:bg-accent/5"
+              }`}
+            >
+              <div className="font-display text-[22px] font-semibold tabular-nums leading-none tracking-[-0.01em]">
+                {openNow}
+              </div>
+              <div className={`mt-1.5 flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.18em] ${
+                openNowFilter ? "text-[#6e0e1e]" : "text-muted-foreground"
+              }`}>
+                <span
+                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    openNowFilter ? "bg-[#6e0e1e] animate-pulse" : "bg-muted-foreground/40"
+                  }`}
+                />
+                open now
+              </div>
+            </button>
           </div>
           <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-[11.5px] text-muted-foreground backdrop-blur">
             <span className="font-medium text-foreground">

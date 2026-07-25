@@ -12,6 +12,7 @@ import {
   clusterByAddress,
   mergeAssets,
   useImportedData,
+  type AnyAsset,
 } from "@/state/imported-data";
 import type { LocationDoc } from "@/components/atlas/types";
 import type { AtlasAsset } from "@/lib/csv-import";
@@ -48,7 +49,25 @@ function LandingInner() {
   /** When true, the chat aside collapses and the map fills the viewport
    *  at ~60% larger perceived area (full width + taller height). */
   const [mapFocus, setMapFocus] = useState(false);
+  /** When true, only clusters whose members are currently open are shown. */
+  const [openNowFilter, setOpenNowFilter] = useState(false);
   const exploreRef = useRef<HTMLDivElement | null>(null);
+
+  // Helper: check whether an asset is currently open based on its hours.
+  function isAssetOpenNow(asset: AnyAsset, now = new Date()): boolean {
+    const dayKey = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][now.getDay()] as
+      | "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+    const h = asset.hours?.[dayKey];
+    if (!h || h.open === "—" || h.close === "—" || !h.open || !h.close) return false;
+    const parse = (s: string) => {
+      const parts = s.split(":").map(Number);
+      return parts[0] * 60 + (parts[1] || 0);
+    };
+    const openM = parse(h.open);
+    const closeM = parse(h.close);
+    const curM = now.getHours() * 60 + now.getMinutes();
+    return curM >= openM && curM < closeM;
+  }
 
   const hasAnyImport =
     importedState.rows.length +
@@ -151,22 +170,39 @@ function LandingInner() {
 
   const totalVisible = merged.mappable.length + merged.chatOnly.length;
 
+  // Open-now filter helpers
+  const openNowCount = useMemo(
+    () => merged.mappable.filter((a) => isAssetOpenNow(a as AnyAsset)).length,
+    [merged.mappable],
+  );
+  const displayClusters = useMemo(() => {
+    if (!openNowFilter) return clusters;
+    return clusters.filter((c) =>
+      c.members.some((m) => isAssetOpenNow(m as AnyAsset)),
+    );
+  }, [clusters, openNowFilter]);
+  const handleToggleOpenNow = useCallback(() => {
+    setOpenNowFilter((prev) => !prev);
+  }, []);
+
   return (
     <div className="min-h-screen w-full">
       <AppHeader />
       <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-6 md:px-6">
         <AtlasHero
-          total={top?.counts.total ?? totalVisible}
+          total={totalVisible}
           uploadedCount={
             importedState.filename
               ? Math.max(0, importedState.totalParsed - importedState.rejected)
               : null
           }
-          openNow={top?.counts.openNow ?? 0}
+          openNow={openNowCount}
           cities={top?.cities ?? []}
           onExplore={handleExploreMap}
           onExploreAssets={handleExploreAssets}
           mapFocus={mapFocus}
+          openNowFilter={openNowFilter}
+          onToggleOpenNow={handleToggleOpenNow}
         />
 
         <div
@@ -239,7 +275,7 @@ function LandingInner() {
             <div className="relative flex-1">
               {view === "map" ? (
                 <MapView
-                  clusters={clusters}
+                  clusters={displayClusters}
                   selectedSlug={selected}
                   pickerClusterKey={pickerClusterKey}
                   onSelect={handleSelectSlug}
