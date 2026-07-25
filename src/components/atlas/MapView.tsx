@@ -8,7 +8,7 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, AtSign, Globe, Mail, Phone, X } from "lucide-react";
+import { ArrowRight, AtSign, Globe, Mail, Phone, Plus, Minus, X } from "lucide-react";
 import {
   CATEGORY_LABEL,
   FEATURE_LABEL,
@@ -73,6 +73,32 @@ function normalizeUrl(s: string): string {
 /** Keep only digits + # * + so tel: links are well-formed. */
 function sanitizePhone(s: string): string {
   return s.replace(/[^0-9+#*]/g, "");
+}
+
+/** Floating zoom‑in / zoom‑out buttons layered over the map. */
+function ZoomControls() {
+  const map = useMap();
+  return (
+    <div className="absolute right-3 top-3 z-[500] flex flex-col gap-px overflow-hidden rounded-lg border border-border/60 bg-card shadow-card">
+      <button
+        type="button"
+        onClick={() => map.zoomIn()}
+        aria-label="Zoom in"
+        className="inline-flex h-8 w-8 items-center justify-center text-foreground transition hover:bg-accent/10 active:bg-accent/20"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+      <div className="h-px bg-border/60" />
+      <button
+        type="button"
+        onClick={() => map.zoomOut()}
+        aria-label="Zoom out"
+        className="inline-flex h-8 w-8 items-center justify-center text-foreground transition hover:bg-accent/10 active:bg-accent/20"
+      >
+        <Minus className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 function FlyTo({
@@ -676,6 +702,7 @@ export function MapView(props: {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> · <a href="https://carto.com/attributions">CARTO</a>'
           subdomains={["a", "b", "c", "d"]}
         />
+        <ZoomControls />
         <FlyTo key={selectedSlug ?? pickerClusterKey ?? "default"} center={flyTarget} />
         <PinAnchorTracker
           point={activePoint}
