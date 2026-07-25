@@ -201,33 +201,107 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /** Fetch a CSV from a public URL and import it through the same pipeline. */
+  /**
+   * Extract unique sheet tab gids from a public Google Sheet by fetching
+   * the HTML page and parsing the embedded JavaScript state for `#gid=`
+   * patterns. Returns the first `max` unique gid values (default 3).
+   * The first tab (gid=0) is always included if present.
+   */
+  const discoverSheetTabs = useCallback(
+    async (sheetId: string, max = 3): Promise<string[]> => {
+      try {
+        const htmlUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
+        const resp = await fetch(htmlUrl);
+        if (!resp.ok) return ["0"]; // fall back to first tab only
+        const html = await resp.text();
+        // Find all #gid=N patterns in the page HTML. Google embeds them
+        // in sheet tab links and in the JavaScript bootstrap data.
+        const gidRe = /#gid=(\d+)/g;
+        const gids = new Set<string>();
+        let m: RegExpExecArray | null;
+        while ((m = gidRe.exec(html)) !== null) {
+          gids.add(m[1]);
+        }
+        // Sort the gids: keep 0 first (first tab), then the rest by
+        // discovery order (the order they appear in the page HTML).
+        const sorted = Array.from(gids).sort((a, b) => {
+          if (a === "0") return -1;
+          if (b === "0") return 1;
+          return html.indexOf(`#gid=${a}`) - html.indexOf(`#gid=${b}`);
+        });
+        return sorted.slice(0, max);
+      } catch {
+        return ["0"]; // fall back to first tab on error
+      }
+    },
+    [],
+  );
+
+  /** Fetch a CSV (optionally from multiple tabs of a Google Sheet) and
+   *  import it through the same pipeline. For Google Sheets URLs, the
+   *  first 3 tabs are discovered and concatenated automatically. */
   const importFromUrl = useCallback(async (url: string) => {
     setImporting(true);
     cancelRef.current.cancelled = true;
     await new Promise((r) => setTimeout(r, 0));
     cancelRef.current.cancelled = false;
     try {
-      // Convert Google Sheets edit/share URLs to CSV export.
-      let fetchUrl = url;
+      // Detect Google Sheets URL and extract the sheet ID.
       const match = url.match(
         /(?:docs\.google\.com\/spreadsheets\/d\/|spreadsheets\/d\/)([a-zA-Z0-9_-]+)/,
       );
+
       if (match) {
-        fetchUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv`;
+        const sheetId = match[1];
+        // Discover tab gids from the sheet's HTML.
+        const gids = await discoverSheetTabs(sheetId, 3);
+
+        // Fetch CSV for each tab and concatenate.
+        const parts: string[] = [];
+        let firstTab = true;
+        for (const gid of gids) {
+          const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+          const resp = await fetch(csvUrl);
+          if (!resp.ok) {
+            console.warn(`[importFromUrl] Tab gid=${gid} returned HTTP ${resp.status}, skipping.`);
+            continue;
+          }
+          const text = await resp.text();
+          if (!text.trim()) continue;
+
+          if (firstTab) {
+            // First tab: keep the header row.
+            parts.push(text);
+            firstTab = false;
+          } else {
+            // Subsequent tabs: strip the header row (first line).
+            const lines = text.split("\n");
+            if (lines.length > 1) {
+              parts.push(lines.slice(1).join("\n"));
+            }
+          }
+        }
+
+        if (parts.length === 0) {
+          toast.error("No data found in any of the sheet's tabs.");
+          return;
+        }
+
+        const combined = parts.join("\n");
+        const tabCount = gids.length;
+        const name = `Google Sheet (${sheetId.slice(0, 8)}…) · ${tabCount} tab${tabCount === 1 ? "" : "s"}`;
+        await importFromText(combined, name, "native");
+      } else {
+        // Non-Google-sheet URL: fetch as plain CSV.
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          toast.error(`Could not fetch CSV from URL (HTTP ${resp.status}).`);
+          return;
+        }
+        const text = await resp.text();
+        const name = url.split("/").pop() ?? "remote.csv";
+        await importFromText(text, name, "native");
       }
-      const resp = await fetch(fetchUrl);
-      if (!resp.ok) {
-        toast.error(`Could not fetch CSV from URL (HTTP ${resp.status}).`);
-        return;
-      }
-      const text = await resp.text();
-      const name = match
-        ? `Google Sheet (${match[1].slice(0, 8)}…)`
-        : url.split("/").pop() ?? "remote.csv";
-      // Use "native" source so the sheet replaces the Convex seed data
-      // as the primary data source for the atlas.
-      await importFromText(text, name, "native");
     } catch (err) {
       console.error("URL import error", err);
       toast.error(
