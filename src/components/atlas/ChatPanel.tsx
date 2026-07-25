@@ -632,14 +632,32 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             exit={{ opacity: 0, y: -4 }}
             className="mx-3 mt-3 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
           >
-            {/* Always-visible row: geocoding x/x + info + close */}
+            {/* Always-visible row: tab status (or geocoding x/x) + info + close */}
             <div className="flex items-center gap-2">
-              <span className="shrink-0 tabular-nums font-medium text-foreground">
-                Geocoding {importedState.progress.done}/{importedState.progress.total}
-              </span>
-              <span className="shrink-0 text-muted-foreground">
-                · {importedState.rows.length} asset{importedState.rows.length === 1 ? "" : "s"}
-              </span>
+              {importedState.progress.currentTab &&
+              importedState.discoveredTabs.length > 0 ? (
+                <>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 font-medium text-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin text-accent" />
+                    Importing tab {importedState.progress.currentTab.idx + 1} of {importedState.progress.currentTab.total}
+                    <span className="text-muted-foreground">
+                      ({importedState.progress.currentTab.name})
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    · {importedState.rows.length} mapped
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="shrink-0 tabular-nums font-medium text-foreground">
+                    Geocoding {importedState.progress.done}/{importedState.progress.total}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    · {importedState.rows.length} asset{importedState.rows.length === 1 ? "" : "s"}
+                  </span>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => setShowGeoDetail((v) => !v)}
@@ -689,6 +707,45 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                         </span>
                       )}
                     </div>
+                    {/* Tab breakdown (only when a multi-tab Google Sheet
+                        import is the source). Shows gid → row count per tab
+                        so the user can confirm every expected tab loaded. */}
+                    {importedState.discoveredTabs.length > 0 && (
+                      <div className="flex flex-col gap-1 text-[10.5px]">
+                        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-foreground/70">
+                          <Database className="h-3 w-3" />
+                          Source · {importedState.discoveredTabs.length} tab
+                          {importedState.discoveredTabs.length === 1 ? "" : "s"}
+                        </div>
+                        {importedState.discoveredTabs.map((tab, i) => {
+                          const isActive =
+                            importedState.progress.currentTab?.idx === i;
+                          return (
+                            <div
+                              key={tab.gid}
+                              className="flex items-center gap-1.5 pl-1 text-muted-foreground"
+                            >
+                              {isActive ? (
+                                <Loader2 className="h-2.5 w-2.5 animate-spin text-accent" />
+                              ) : tab.rowCount > 0 ? (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              ) : (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+                              )}
+                              <span className="truncate font-medium text-foreground/85">
+                                {tab.name ?? `gid ${tab.gid}`}
+                              </span>
+                              <span className="ml-auto shrink-0 tabular-nums">
+                                {tab.rowCount > 0
+                                  ? `${tab.rowCount} row${tab.rowCount === 1 ? "" : "s"}`
+                                  : "—"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     {/* Detail stats */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-muted-foreground">
                       {importedState.pending.length > 0 && <span>{importedState.pending.length} geocoding</span>}

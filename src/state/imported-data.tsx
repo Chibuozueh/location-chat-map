@@ -55,6 +55,20 @@ export type GeocodeProgress = {
   cerebrasModelLabel: string | null;
   failed: number;
   active: boolean;
+  /** Tab currently being fetched during a multi-tab Google Sheet import.
+   *  Drives the chip's "Importing tab 2 of 3 (Gyms & Fitness Spaces)" label
+   *  so the user can see which tab is on the wire. `null` outside of the
+   *  import pass. */
+  currentTab: { name: string; idx: number; total: number } | null;
+};
+
+/** A single Google-Sheet tab discovered during the URL-import pass. */
+export type DiscoveredTab = {
+  gid: string;
+  name: string | null;
+  /** Number of non-empty rows contributed by this tab (header excluded for
+   *  tabs after the first). Filled after the CSV fetch completes. */
+  rowCount: number;
 };
 
 type ImportedState = {
@@ -71,6 +85,16 @@ type ImportedState = {
   totalParsed: number;
   rejected: number;
   progress: GeocodeProgress;
+  /** Tabs discovered from the Google Sheet source, in import order. Each
+   *  entry includes the gid, tab name, and parsed row count (header
+   *  excluded for tabs after the first). Empty for non-Google sources
+   *  and after a `clear()`. Surfaced in the chat panel's info popover
+   *  so the user can confirm all expected tabs loaded. */
+  discoveredTabs: DiscoveredTab[];
+  /** Quick lookup: gid → row count from a Google Sheet import. Mirrors
+   *  the values stored inside `discoveredTabs` so the UI can render
+   *  per-tab counts without iterating the array. */
+  tabRowCounts: Record<string, number>;
   /** Where the imported data originally came from. Drives the header chip
    *  so the user knows if the atlas is showing a manually-uploaded CSV
    *  vs. a static reference file shipped in `public/data/`. */
@@ -99,6 +123,7 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   cerebrasModelLabel: null,
   failed: 0,
   active: false,
+  currentTab: null,
 };
 
 const EMPTY: ImportedState = {
@@ -114,6 +139,8 @@ const EMPTY: ImportedState = {
   progress: EMPTY_PROGRESS,
   source: null,
   released: true,
+  discoveredTabs: [],
+  tabRowCounts: {},
 };
 
 type ImportedContextValue = {
@@ -202,36 +229,55 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Extract unique sheet tab gids from a public Google Sheet by fetching
-   * the HTML page and parsing the embedded JavaScript state for `#gid=`
-   * patterns. Returns the first `max` unique gid values (default 3).
-   * The first tab (gid=0) is always included if present.
+   * Discover the first `max` tabs of a public Google Sheet by fetching
+   * its HTML page and parsing the embedded JavaScript bootstrap data
+   * for tab metadata.
+   *
+   * Google stores tabs as a JSON-style array literal inside a `<script>`
+   * block, of the form:
+   *   ["<INDEX>","<GID>",[{"1":[[0,0,"<TABNAME>"]...]]]
+   * The bytes in raw HTML also contain literal backslash-escapes
+   * (`\"`, `\\u0026`, …) because the data is double-encoded JS.
+   *
+   * Matches look like (in raw HTML bytes):
+   *   ,"380541745",[{\"1\":[[0,0,\"Basketball Courts\"
+   *
+   * We extract both the gid and the tab name when available; the name
+   * decoder then strips `\"` and `\u00XX` escapes so the chip can show
+   * the real title ("Gyms & Fitness Spaces" not "Gyms \\u0026 Fitness
+   * Spaces").
    */
   const discoverSheetTabs = useCallback(
-    async (sheetId: string, max = 3): Promise<string[]> => {
+    async (sheetId: string, max = 3): Promise<DiscoveredTab[]> => {
       try {
-        const htmlUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit`;
+        const htmlUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit?usp=sharing`;
         const resp = await fetch(htmlUrl);
-        if (!resp.ok) return ["0"]; // fall back to first tab only
+        if (!resp.ok) return [];
         const html = await resp.text();
-        // Find all #gid=N patterns in the page HTML. Google embeds them
-        // in sheet tab links and in the JavaScript bootstrap data.
-        const gidRe = /#gid=(\d+)/g;
-        const gids = new Set<string>();
+        const tabs: DiscoveredTab[] = [];
+        // Source bytes: ,"<digits>",[{"1":[[0,0,"<TABNAME>"
+        // Each `\` in source needs to be `\\` in regex literal, and each
+        // `[` / `{` needs `\[` / `\{`. Quote chars are literal.
+        const re = new RegExp(`,\"(\d{6,15})\",\[\{\"1\":\[\[0,0,\"((?:[^"\\]+|\[^"])+?)\"`, 'g');
         let m: RegExpExecArray | null;
-        while ((m = gidRe.exec(html)) !== null) {
-          gids.add(m[1]);
+        while ((m = re.exec(html)) !== null && tabs.length < max) {
+          const gid = m[1];
+          let rawName = m[2];
+          // Decode JS string escapes that appear in tab names.
+          // \u0026 -> &, \u0027 -> ', \u002F -> /, \" -> ", \\ -> \
+          rawName = rawName
+            .replace(/\\u([0-9a-fA-F]{4})/gi, (_, h) =>
+              String.fromCharCode(parseInt(h, 16)),
+            )
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\");
+          if (!tabs.some((t) => t.gid === gid)) {
+            tabs.push({ gid, name: rawName || null, rowCount: 0 });
+          }
         }
-        // Sort the gids: keep 0 first (first tab), then the rest by
-        // discovery order (the order they appear in the page HTML).
-        const sorted = Array.from(gids).sort((a, b) => {
-          if (a === "0") return -1;
-          if (b === "0") return 1;
-          return html.indexOf(`#gid=${a}`) - html.indexOf(`#gid=${b}`);
-        });
-        return sorted.slice(0, max);
+        return tabs;
       } catch {
-        return ["0"]; // fall back to first tab on error
+        return [];
       }
     },
     [],
@@ -239,7 +285,10 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
   /** Fetch a CSV (optionally from multiple tabs of a Google Sheet) and
    *  import it through the same pipeline. For Google Sheets URLs, the
-   *  first 3 tabs are discovered and concatenated automatically. */
+   *  first 3 tabs are discovered from the sheet HTML and fetched one
+   *  at a time. The active tab is surfaced via `progress.currentTab`
+   *  so the chat panel chip can display
+   *  "Importing tab 2 of 3 (Gyms & Fitness Spaces)" while we wait. */
   const importFromUrl = useCallback(async (url: string) => {
     setImporting(true);
     cancelRef.current.cancelled = true;
@@ -253,34 +302,95 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
       if (match) {
         const sheetId = match[1];
-        // Discover tab gids from the sheet's HTML.
-        const gids = await discoverSheetTabs(sheetId, 3);
+        // Discover tab gids + names from the sheet's HTML.
+        const tabs = await discoverSheetTabs(sheetId, 3);
+
+        if (tabs.length === 0) {
+          toast.error(
+            "Couldn't find any tabs in this Google Sheet. Make sure it's shared as 'Anyone with the link can view'.",
+          );
+          return;
+        }
+
+        // Clear any leftover tab state from a previous import.
+        setState((prev) => ({
+          ...prev,
+          progress: { ...prev.progress, currentTab: null },
+          discoveredTabs: tabs.map((t) => ({ ...t })),
+          tabRowCounts: {},
+        }));
 
         // Fetch CSV for each tab and concatenate.
         const parts: string[] = [];
         let firstTab = true;
-        for (const gid of gids) {
-          const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-          const resp = await fetch(csvUrl);
-          if (!resp.ok) {
-            console.warn(`[importFromUrl] Tab gid=${gid} returned HTTP ${resp.status}, skipping.`);
-            continue;
-          }
-          const text = await resp.text();
-          if (!text.trim()) continue;
+        const rowCounts: Record<string, number> = {};
 
-          if (firstTab) {
-            // First tab: keep the header row.
-            parts.push(text);
-            firstTab = false;
-          } else {
-            // Subsequent tabs: strip the header row (first line).
-            const lines = text.split("\n");
-            if (lines.length > 1) {
-              parts.push(lines.slice(1).join("\n"));
+        for (let i = 0; i < tabs.length; i++) {
+          if (cancelRef.current.cancelled) return;
+          const tab = tabs[i];
+          // Surface which tab we're about to fetch so the chip can
+          // show "Importing tab N of M (Name) …". Cleared at end.
+          setState((prev) => ({
+            ...prev,
+            progress: {
+              ...prev.progress,
+              currentTab: {
+                name: tab.name ?? `Tab ${i + 1}`,
+                idx: i,
+                total: tabs.length,
+              },
+            },
+          }));
+
+          const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${tab.gid}`;
+          try {
+            const resp = await fetch(csvUrl);
+            if (!resp.ok) {
+              console.warn(
+                `[importFromUrl] Tab gid=${tab.gid} returned HTTP ${resp.status}, skipping.`,
+              );
+              continue;
             }
+            const text = await resp.text();
+            if (!text.trim()) continue;
+
+            // Count non-empty lines. Header is the first line for tab 1
+            // and is dropped from tabs 2+, so subtract it where present.
+            const lines = text.split("\n").filter((l) => l.trim().length > 0);
+            const rowCount = firstTab ? Math.max(0, lines.length - 1) : lines.length;
+            rowCounts[tab.gid] = rowCount;
+            tab.rowCount = rowCount;
+            // Mirror the per-tab count into state so the chip sees it
+            // update incrementally during the import.
+            setState((prev) => ({
+              ...prev,
+              tabRowCounts: { ...prev.tabRowCounts, [tab.gid]: rowCount },
+              discoveredTabs: prev.discoveredTabs.map((dt) =>
+                dt.gid === tab.gid ? { ...dt, rowCount } : dt,
+              ),
+            }));
+
+            if (firstTab) {
+              // First tab: keep the header row.
+              parts.push(text);
+              firstTab = false;
+            } else {
+              // Subsequent tabs: strip the header row (first line).
+              if (lines.length > 1) {
+                parts.push(lines.slice(1).join("\n"));
+              }
+            }
+          } catch (err) {
+            console.warn(`[importFromUrl] Tab gid=${tab.gid} fetch failed`, err);
           }
         }
+
+        // Clear the active-tab indicator — the import is about to go
+        // through the geocode cascade which is tracked separately.
+        setState((prev) => ({
+          ...prev,
+          progress: { ...prev.progress, currentTab: null },
+        }));
 
         if (parts.length === 0) {
           toast.error("No data found in any of the sheet's tabs.");
@@ -288,9 +398,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         }
 
         const combined = parts.join("\n");
-        const tabCount = gids.length;
+        const tabCount = tabs.length;
         const name = `Google Sheet (${sheetId.slice(0, 8)}…) · ${tabCount} tab${tabCount === 1 ? "" : "s"}`;
-        await importFromText(combined, name, "native");
+        await importFromText(combined, name, "native", tabs, rowCounts);
       } else {
         // Non-Google-sheet URL: fetch as plain CSV.
         const resp = await fetch(url);
@@ -300,7 +410,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         }
         const text = await resp.text();
         const name = url.split("/").pop() ?? "remote.csv";
-        await importFromText(text, name, "native");
+        await importFromText(text, name, "native", [], {});
       }
     } catch (err) {
       console.error("URL import error", err);
@@ -328,6 +438,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       text: string,
       filename: string,
       source: "native" | "upload",
+      discoveredTabs: DiscoveredTab[] = [],
+      tabRowCounts: Record<string, number> = {},
     ): Promise<void> => {
       // Cancel any in-flight loop from a previous import so its trailing
       // setState can't corrupt this brand-new state.
@@ -383,9 +495,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           cerebrasModelLabel: null,
           failed: 0,
           active: pendingCount > 0,
+          currentTab: null,
         },
         source,
         released: true,
+        discoveredTabs,
+        tabRowCounts,
       });
 
       cancelRef.current.cancelled = false;
@@ -445,7 +560,13 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             cerebrasModelLabel: null,
             failed: 0,
             active: false,
+            currentTab: null,
           },
+          // Dismiss the tab list too — the user is hiding the chip, so
+          // the info popover shouldn't keep showing the old tab rows.
+          // The next page-load auto-fetch will repopulate discoveredTabs.
+          discoveredTabs: [],
+          tabRowCounts: {},
           released: true,
         };
       }
