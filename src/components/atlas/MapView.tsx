@@ -16,6 +16,7 @@ import {
   type LocationDoc,
 } from "./types";
 import type { Cluster } from "@/state/imported-data";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const DEFAULT_CENTER: [number, number] = [33.74, -84.45];
 const DEFAULT_ZOOM = 12;
@@ -150,17 +151,110 @@ function DescriptionCard({
   point: AnchorPoint;
   onClose: () => void;
 }) {
+  const isMobile = useIsMobile();
   const cardWidth = 300;
   const offsetAbove = 56;
   const left = Math.round(point.x - cardWidth / 2);
   const top = Math.round(point.y - offsetAbove);
+  // On desktop, clamp left so the card doesn't clip off the left edge.
+  const clampedLeft = Math.max(8, left);
+
+  // On mobile, anchor as a bottom sheet within the map instead of pin-anchored.
+  if (isMobile) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 20 }}
+        transition={{ type: "spring", stiffness: 240, damping: 26 }}
+        className="pointer-events-auto absolute inset-x-3 bottom-3 z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
+        style={{ maxHeight: "calc(100% - 1.5rem)" }}
+        role="dialog"
+        aria-label={`Description for ${loc.name}`}
+      >
+        <div className="flex items-start justify-between gap-2 rounded-t-2xl border-b border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6e0e1e]">
+              {CATEGORY_LABEL[loc.category] ?? loc.category}
+            </div>
+            <div className="mt-0.5 truncate font-display text-[14px] font-semibold leading-tight text-[#0e0a0b]">
+              {loc.name}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close description"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#6e0e1e] transition hover:bg-[#6e0e1e1a]"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-3 py-2" style={{ maxHeight: "30vh" }}>
+          <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#0e0a0b]">
+            {loc.description ? (
+              loc.description
+            ) : (
+              <span className="text-muted-foreground">
+                No description provided in the spreadsheet.
+              </span>
+            )}
+          </div>
+          {(loc.website ||
+            loc.socialMedia ||
+            loc.contactName ||
+            loc.contactPhone ||
+            loc.contactEmail) && (
+            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-[#6e0e1e1f] pt-2">
+              {loc.contactName && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
+                  <AtSign className="h-3 w-3 text-[#6e0e1e]" />
+                  <span className="truncate max-w-[120px]">{loc.contactName}</span>
+                </span>
+              )}
+              {loc.website && (
+                <a
+                  href={normalizeUrl(loc.website)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+                >
+                  <Globe className="h-3 w-3" /> Website
+                </a>
+              )}
+              {loc.contactPhone && (
+                <a
+                  href={`tel:${sanitizePhone(loc.contactPhone)}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+                >
+                  <Phone className="h-3 w-3 text-[#6e0e1e]" />
+                  <span className="tabular-nums truncate max-w-[110px]">
+                    {loc.contactPhone}
+                  </span>
+                </a>
+              )}
+              {loc.contactEmail && (
+                <a
+                  href={`mailto:${loc.contactEmail}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+                >
+                  <Mail className="h-3 w-3 text-[#6e0e1e]" /> Email
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.97 }}
       transition={{ type: "spring", stiffness: 240, damping: 22 }}
-      style={{ left, top, width: cardWidth }}
+      style={{ left: clampedLeft, top, width: cardWidth }}
       className="pointer-events-auto absolute z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
       role="dialog"
       aria-label={`Description for ${loc.name}`}
@@ -286,17 +380,100 @@ function ClusterPickerCard({
   onPick: (slug: string) => void;
   onClose: () => void;
 }) {
+  const isMobile = useIsMobile();
   const cardWidth = 320;
   const offsetAbove = 56;
   const left = Math.round(point.x - cardWidth / 2);
   const top = Math.round(point.y - offsetAbove);
+  const clampedLeft = Math.max(8, left);
+
+  // On mobile, render as a bottom sheet within the map.
+  if (isMobile) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 20 }}
+        transition={{ type: "spring", stiffness: 240, damping: 26 }}
+        className="pointer-events-auto absolute inset-x-3 bottom-3 z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
+        style={{ maxHeight: "calc(100% - 1.5rem)" }}
+        role="dialog"
+        aria-label={`${cluster.count} assets at ${cluster.address}`}
+      >
+        <div className="flex items-start justify-between gap-2 rounded-t-2xl border-b border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6e0e1e]">
+              {cluster.count} assets at this address
+            </div>
+            <div className="mt-0.5 truncate font-display text-[13px] font-semibold leading-tight text-[#0e0a0b]">
+              {cluster.address}
+              {cluster.city ? `, ${cluster.city}` : ""}
+              {cluster.state ? ` ${cluster.state}` : ""}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close picker"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#6e0e1e] transition hover:bg-[#6e0e1e1a]"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-2 py-2" style={{ maxHeight: "35vh" }}>
+          {cluster.members.map((m, i) => {
+            const desc =
+              (m as LocationDoc | { description?: string }).description ?? "";
+            const accent = (m as LocationDoc).accentColor || "#A47551";
+            return (
+              <div
+                key={m.slug}
+                className="rounded-xl border border-border/40 bg-background/30 px-2.5 py-2 transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0a]"
+              >
+                <button
+                  type="button"
+                  onClick={() => onPick(m.slug)}
+                  className="flex w-full items-start gap-2.5 text-left"
+                >
+                  <span
+                    className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[12px] font-semibold text-white"
+                    style={{ background: accent }}
+                  >
+                    {m.name?.charAt(0) ?? "•"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12.5px] font-semibold text-foreground">
+                      {m.name}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-muted-foreground">
+                      {CATEGORY_LABEL[m.category ?? ""] ?? m.category ?? "Asset"}
+                      {desc ? " · " : ""}
+                      {desc && desc.length > 80
+                        ? `${desc.slice(0, 78).trimEnd()}…`
+                        : desc}
+                    </span>
+                  </span>
+                  <ArrowRight
+                    className="mt-1 h-3.5 w-3.5 shrink-0 text-[#6e0e1e]"
+                    aria-hidden
+                  />
+                  <span className="sr-only">. Asset {i + 1} of {cluster.count}.</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.97 }}
       transition={{ type: "spring", stiffness: 240, damping: 22 }}
-      style={{ left, top, width: cardWidth }}
+      style={{ left: clampedLeft, top, width: cardWidth }}
       className="pointer-events-auto absolute z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
       role="dialog"
       aria-label={`${cluster.count} assets at ${cluster.address}`}
