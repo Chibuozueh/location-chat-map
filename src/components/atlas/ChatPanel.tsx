@@ -618,48 +618,29 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
         </div>
       </div>
 
-      {/* imported-file chip + geocode progress — compact */}
+      {/* imported-file chip — always-visible: geocoding x/asset # + info + close
+          Expandable: filename, mapped count, progress bar, detail stats */}
       <AnimatePresence>
         {importedState.filename && (
           <motion.div
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
-            className="mx-3 mt-3 flex flex-col gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
+            className="mx-3 mt-3 rounded-lg border border-accent/40 bg-accent/10 px-2.5 py-2 text-[11px]"
           >
-            {/* Compact single-line: filename · mapped · progress bar · geocoding x/x · info · close */}
+            {/* Always-visible row: geocoding x/x + info + close */}
             <div className="flex items-center gap-2">
-              {importedState.source === "native" ? (
-                <Database className="h-3.5 w-3.5 shrink-0 text-accent" />
-              ) : (
-                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-accent" />
-              )}
-              <span className="truncate font-medium text-foreground">
-                {importedState.source === "native" ? "public/data/" : ""}
-                {importedState.filename}
+              <span className="shrink-0 tabular-nums font-medium text-foreground">
+                Geocoding {importedState.progress.done}/{importedState.progress.total}
               </span>
               <span className="shrink-0 text-muted-foreground">
-                · {importedState.rows.length} mapped
+                · {importedState.rows.length} asset{importedState.rows.length === 1 ? "" : "s"}
               </span>
-              {importedState.progress.total > 0 && (
-                <>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    Geocoding {importedState.progress.done}/{importedState.progress.total}
-                  </span>
-                  <span className="h-1 grow-0 rounded-full bg-border" style={{ flexBasis: 60 }}>
-                    <span
-                      className="block h-1 rounded-full bg-accent transition-all"
-                      style={{ width: `${importedState.progress.total ? (importedState.progress.done / importedState.progress.total) * 100 : 0}%` }}
-                    />
-                  </span>
-                </>
-              )}
-              {/* Info icon — hover/click toggles the full detail breakdown */}
               <button
                 type="button"
                 onClick={() => setShowGeoDetail((v) => !v)}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
-                aria-label="Show geocoding details"
+                className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+                aria-label={showGeoDetail ? "Hide geocoding details" : "Show geocoding details"}
               >
                 <Info className="h-3 w-3" />
               </button>
@@ -671,7 +652,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                 <X className="h-3 w-3" />
               </button>
             </div>
-            {/* Expandable detail panel */}
+            {/* Expandable detail panel — filename, mapped, progress bar, stats */}
             <AnimatePresence>
               {showGeoDetail && (
                 <motion.div
@@ -680,36 +661,62 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                   exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden"
                 >
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[10.5px] text-muted-foreground">
-                    {importedState.pending.length > 0 && <span>{importedState.pending.length} geocoding</span>}
-                    {importedState.failed.length > 0 && <span>{importedState.failed.length} ungeocodable</span>}
-                    {importedState.rejected > 0 && <span>{importedState.rejected} skipped</span>}
-                    {importedState.progress.cached > 0 && <span>{importedState.progress.cached} cached</span>}
-                    {importedState.progress.exact > 0 && <span>{importedState.progress.exact} exact</span>}
-                    {importedState.progress.relaxed > 0 && <span>{importedState.progress.relaxed} relaxed</span>}
-                    {importedState.progress.zipCentroid > 0 && <span>{importedState.progress.zipCentroid} zip-centroid</span>}
-                    {importedState.progress.cerebrasCleaned > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
-                        {importedState.progress.cerebrasCleaned} cerebras-cleaned
+                  <div className="flex flex-col gap-2 pt-2">
+                    {/* File info + progress bar */}
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {importedState.source === "native" ? (
+                        <Database className="h-3.5 w-3.5 shrink-0 text-accent" />
+                      ) : (
+                        <FileSpreadsheet className="h-3.5 w-3.5 shrink-0 text-accent" />
+                      )}
+                      <span className="truncate font-medium text-foreground">
+                        {importedState.source === "native" ? "public/data/" : ""}
+                        {importedState.filename}
                       </span>
-                    )}
-                    {importedState.progress.cerebrasCallsMade > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
-                        {importedState.progress.cerebrasCallsMade} Cerebras call{importedState.progress.cerebrasCallsMade === 1 ? "" : "s"}
+                      <span className="shrink-0 text-muted-foreground">
+                        · {importedState.rows.length} mapped
                       </span>
-                    )}
-                    {importedState.progress.cerebrasError > 0 && <span>{importedState.progress.cerebrasError} cerebras errors</span>}
-                    {importedState.progress.failed > 0 && (
-                      <button
-                        type="button"
-                        onClick={retry}
-                        disabled={importing}
-                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f] disabled:opacity-50"
-                        title="Re-run the address cascade on every previously failed row"
-                      >
-                        ↻ Retry
-                      </button>
-                    )}
+                      {importedState.progress.total > 0 && (
+                        <span className="ml-auto h-1 grow-0 rounded-full bg-border" style={{ flexBasis: 60 }}>
+                          <span
+                            className="block h-1 rounded-full bg-accent transition-all"
+                            style={{ width: `${importedState.progress.total ? (importedState.progress.done / importedState.progress.total) * 100 : 0}%` }}
+                          />
+                        </span>
+                      )}
+                    </div>
+                    {/* Detail stats */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-muted-foreground">
+                      {importedState.pending.length > 0 && <span>{importedState.pending.length} geocoding</span>}
+                      {importedState.failed.length > 0 && <span>{importedState.failed.length} ungeocodable</span>}
+                      {importedState.rejected > 0 && <span>{importedState.rejected} skipped</span>}
+                      {importedState.progress.cached > 0 && <span>{importedState.progress.cached} cached</span>}
+                      {importedState.progress.exact > 0 && <span>{importedState.progress.exact} exact</span>}
+                      {importedState.progress.relaxed > 0 && <span>{importedState.progress.relaxed} relaxed</span>}
+                      {importedState.progress.zipCentroid > 0 && <span>{importedState.progress.zipCentroid} zip-centroid</span>}
+                      {importedState.progress.cerebrasCleaned > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
+                          {importedState.progress.cerebrasCleaned} cerebras-cleaned
+                        </span>
+                      )}
+                      {importedState.progress.cerebrasCallsMade > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
+                          {importedState.progress.cerebrasCallsMade} Cerebras call{importedState.progress.cerebrasCallsMade === 1 ? "" : "s"}
+                        </span>
+                      )}
+                      {importedState.progress.cerebrasError > 0 && <span>{importedState.progress.cerebrasError} cerebras errors</span>}
+                      {importedState.progress.failed > 0 && (
+                        <button
+                          type="button"
+                          onClick={retry}
+                          disabled={importing}
+                          className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6e0e1e] transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e1f] disabled:opacity-50"
+                          title="Re-run the address cascade on every previously failed row"
+                        >
+                          ↻ Retry
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               )}
