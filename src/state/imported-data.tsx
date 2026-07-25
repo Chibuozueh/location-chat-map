@@ -247,15 +247,18 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * the real title ("Gyms & Fitness Spaces" not "Gyms \\u0026 Fitness
    * Spaces").
    */
-/** Known Google-Sheet tabs that are NOT data (reference / schema /
- *  research). Filtered out during tab discovery so they do not
- * pollute the asset rows or inflate the rejected-row count. GIDs
- * are permanent - safe to hardcode.
+/** Only these tabs are imported. Matches are case-insensitive and
+ *  ignore surrounding whitespace; the comparison is done after decoding
+ *  the HTML escape sequences (e.g. "\u0026" -> "&") so the names match
+ *  the visible Google Sheet tab title.
  */
-const REFERENCE_TAB_GIDS: ReadonlySet<string> = new Set([
-  "77035068",   // Category Dictionary
-  "476765564",  // Asset Attributes
-  "1232281477", // Items to Research
+const TARGET_TAB_NAMES: ReadonlySet<string> = new Set([
+  "Comm Fitness Classes & Prog",
+  "Basketball Courts",
+  "Gyms & Fitness Spaces",
+  "Parks & Rec",
+  "Aquatics & Swim Locations",
+  "MARTA Public Transit",
 ]);
 
   const discoverSheetTabs = useCallback(
@@ -280,14 +283,14 @@ const REFERENCE_TAB_GIDS: ReadonlySet<string> = new Set([
           // Decode JS string escapes that appear in tab names.
           // \u0026 -> &, \u0027 -> ', \u002F -> /, \" -> ", \\ -> \
           rawName = rawName
+            .replace(/\\\\/g, "\\")
             .replace(/\\u([0-9a-fA-F]{4})/gi, (_, h) =>
               String.fromCharCode(parseInt(h, 16)),
             )
-            .replace(/\\"/g, '"')
-            .replace(/\\\\/g, "\\");
-          if (REFERENCE_TAB_GIDS.has(gid)) continue;
+            .replace(/\\"/g, '"');
+          if (!rawName || !TARGET_TAB_NAMES.has(rawName.trim())) continue;
           if (!tabs.some((t) => t.gid === gid)) {
-            tabs.push({ gid, name: rawName || null, rowCount: 0 });
+            tabs.push({ gid, name: rawName, rowCount: 0 });
           }
         }
         return tabs;
