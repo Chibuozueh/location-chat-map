@@ -772,6 +772,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // `state.rows`.
         filename: prev.filename ?? "atlas-seed",
         source: prev.source ?? "native",
+        // Set totalParsed so the hero asset count badge reflects the
+        // real number of seed entries being loaded (not the initial 0).
+        totalParsed: prev.totalParsed || (ready.length + pending.length),
         progress: {
           ...prev.progress,
           total: prev.progress.total + novelPending.length,
