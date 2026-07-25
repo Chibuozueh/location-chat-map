@@ -942,85 +942,17 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   }, [state.importedAt, state.retryNonce]);
 
   /**
-   * Push rows from the canonical seed list (or any other LocationDoc[]) into
-   * the existing geocode pipeline on first paint:
-   *   - Rows that already carry finite lat/lng land directly in `state.rows`
-   *     (the map plots them immediately, no API call).
-   *   - Rows missing coords land in `state.pending` with `needsGeocode: true`
-   *     and a synthesized `geoKey`. Bumping `retryNonce` triggers the existing
-   *     Cerebras → Nominatim cascade loop, which routes each row through
-   *     the same per-row `setState` path that uploaded CSVs already use.
-   *
-   * The function is idempotent on slug — re-rendering with the same batch is
-   * a no-op so React's double-mount or fast-refresh can't double-charge the
-   * geocoder.
+   * DEPRECATED: previously pushed the curated `SEED_LOCATIONS` rows
+   * (returned from `api.locations.list`) into the geocode pipeline on
+   * first paint. The atlas now sources all data from the live Google
+   * Sheet (single source of truth), so the curated fallback is no
+   * longer injected. The function is kept on the context for backward
+   * compatibility with any callers still invoking it (a no-op).
    */
-  const seedBackfill = useCallback((seeded: LocationDoc[]) => {
-    if (seeded.length === 0) return;
-    const ready: AtlasAsset[] = [];
-    const pending: Array<{ id: string; doc: AtlasAsset }> = [];
-    seeded.forEach((a, i) => {
-      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) {
-        ready.push(a as unknown as AtlasAsset);
-        return;
-      }
-      // The address column often contains "VenueName\n123 Street SW" or just
-      // "various". Use only the last non-empty line so the cascade feeds
-      // Nominatim a real street (matching what `importCsv` does via
-      // `parseFreeformAddress`).
-      const lines = (a.address ?? "")
-        .split("\n")
-        .map((p) => p.trim())
-        .filter(Boolean);
-      const streetLine = lines.length > 1 ? lines[lines.length - 1] : lines[0] ?? "";
-      const postcode = (a.postalCode ?? "").trim();
-      pending.push({
-        id: `seed:${i}:${a.slug}`,
-        doc: {
-          ...(a as any),
-          address: streetLine || "Atlanta",
-          lat: NaN,
-          lng: NaN,
-          needsGeocode: true,
-          geoKey: streetLine
-            ? `${streetLine.toLowerCase()}|${(a.city ?? "").toLowerCase()}|${postcode}`
-            : a.slug,
-          coordAccuracy: undefined,
-        } as AtlasAsset,
-      });
-    });
-
-    setState((prev) => {
-      const havePending = new Set(prev.pending.map((p) => p.doc.slug));
-      const haveRows = new Set(prev.rows.map((r) => r.slug));
-      const novelPending = pending.filter((p) => !havePending.has(p.doc.slug));
-      const novelReady = ready.filter((r) => !haveRows.has(r.slug));
-      if (novelPending.length === 0 && novelReady.length === 0) return prev;
-
-      return {
-        ...prev,
-        rows: [...prev.rows, ...novelReady],
-        pending: [...prev.pending, ...novelPending],
-        // Tag the native source so Landing knows to replace the seeded
-        // rows in `merged.mappable` with the resolved ones from
-        // `state.rows`.
-        filename: prev.filename ?? "atlas-seed",
-        source: prev.source ?? "native",
-        // Set totalParsed so the hero asset count badge reflects the
-        // real number of seed entries being loaded (not the initial 0).
-        totalParsed: prev.totalParsed || (ready.length + pending.length),
-        progress: {
-          ...prev.progress,
-          total: prev.progress.total + novelPending.length,
-          active: prev.progress.active || novelPending.length > 0,
-        },
-        // CRITICAL: bumping retryNonce re-fires the existing
-        // `useEffect([importedAt, retryNonce])` so the per-row
-        // geocode loop iterates the new `state.pending` rows.
-        retryNonce: prev.retryNonce + 1,
-        released: true,
-      };
-    });
+  const seedBackfill = useCallback((_seeded: LocationDoc[]) => {
+    // No-op. The Google Sheet auto-import (`importFromUrl`) is now the
+    // single source of truth; pulling SEED_LOCATIONS again would
+    // double-count assets and contradict the sheet content.
   }, []);
 
   const value = useMemo<ImportedContextValue>(

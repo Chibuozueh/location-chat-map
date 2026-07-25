@@ -18,36 +18,27 @@ import type { LocationDoc } from "@/components/atlas/types";
 import type { AtlasAsset } from "@/lib/csv-import";
 
 function LandingInner() {
-  // The Convex `list` query returns the embedded `SEED_LOCATIONS` already
-  // translated into the canonical `AtlasAsset` shape, so we can use it
-  // directly without an extra client-side adapter.
-  const seeded =
-    (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
-  const top = useQuery(api.locations.topPicks);
-  const { state: importedState, seedBackfill, importFromUrl } = useImportedData();
+  // The atlas's only data source is the live Google Sheet (auto-fetched
+  // below). We no longer pull SEED_LOCATIONS from Convex — the imported
+  // rows are the single source of truth for the map and chat. We still
+  // type it as LocationDoc[] so the call sites below read naturally;
+  // `seeded` is just an empty array passed to `mergeAssets` so the merged
+  // bucket is exactly what `importedState` contains.
+  const seeded: LocationDoc[] = [];
+  // `topPicks.cities` used to feed hero-side "cities covered" chips from
+  // seed data. We keep the prop but feed an empty array so the hero doesn't
+  // render stale seeded cities.
+  const cities: string[] = [];
+  const { state: importedState, importFromUrl } = useImportedData();
 
-  // Default Google Sheets URL — the live asset spreadsheet.
+  // Default Google Sheets URL — the live asset spreadsheet. Single source
+  // of truth: editing the spreadsheet and refreshing the page shows the
+  // updated data immediately.
   const GOOGLE_SHEETS_URL =
     "https://docs.google.com/spreadsheets/d/1zmV_whgwxfL7xEOvQXbWLU3i56fgPko1Q01UbWf7jVA/export?format=csv";
 
-  // First-paint backfill: route SEED rows that lack lat/lng through the
-  // existing Cerebras → Nominatim cascade. Tracked by a stable slug-list
-  // signature so editing SEED_LOCATIONS in code (which changes the
-  // signature) re-runs the backfill on the next refresh, while React's
-  // double-mount / fast-refresh won't double-charge the geocoder.
-  const seedBackfillSigRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (seeded.length === 0) return;
-    const sig = seeded
-      .map((s) => s.slug)
-      .sort()
-      .join("|");
-    if (seedBackfillSigRef.current === sig) return;
-    seedBackfillSigRef.current = sig;
-    seedBackfill(seeded);
-  }, [seeded, seedBackfill]);
-
-  // Auto-fetch the Google Sheets CSV on first paint (once).
+  // Auto-fetch the Google Sheets CSV on first paint (once). The Sheet is
+  // the only data source — no seed backfill, no curated fallback list.
   const sheetsFetchedRef = useRef(false);
   useEffect(() => {
     if (sheetsFetchedRef.current) return;
@@ -209,7 +200,7 @@ function LandingInner() {
               : null
           }
           openNow={openNowCount}
-          cities={top?.cities ?? []}
+          cities={cities}
           onExplore={handleExploreMap}
           onExploreAssets={handleExploreAssets}
           mapFocus={mapFocus}
@@ -335,9 +326,12 @@ function LandingInner() {
         {/* Subtle footer */}
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
           <div>
-            Atlanta Atlas · showing {hasAnyImport
+            Atlanta Atlas · showing{" "}
+            {importedState.source === "upload"
               ? "only your uploaded spreadsheet"
-              : "the 12 curated Southwest Atlanta defaults"}
+              : importedState.rows.length > 0
+                ? "the live Google Sheet spreadsheet"
+                : "the live Google Sheet spreadsheet (loading)"}
             .
           </div>
           <div className="flex items-center gap-3">

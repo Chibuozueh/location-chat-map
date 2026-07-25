@@ -30,13 +30,17 @@ import {
 import { useImportedData, mergeAssets } from "@/state/imported-data";
 import type { AtlasAsset } from "@/lib/csv-import";
 
+// Suggestions reflect the categories in the live Google Sheet (Comm
+// Based Classes & Programming · Basketball Courts · Gyms & Fitness Spaces,
+// plus the open-now filter and free-tier queries that work across all
+// tabs).
 const SUGGESTIONS = [
-  "What programs does Hills 4 ATL offer?",
-  "Where is the Walk with a Doc event?",
-  "Tell me about the ATL Beltline Rhythm Roll",
-  "Which programs are free on the Beltline?",
-  "What youth programs are available?",
-  "Where can I find fitness classes near Westside?",
+  "What programs does the Comm Based Classes tab offer?",
+  "Show all basketball courts on the map",
+  "Which gym or fitness spaces are open right now?",
+  "What are the park and rec locations?",
+  "Which assets are free?",
+  "Where are the assets on the Beltline?",
 ];
 
 function newId() {
@@ -355,7 +359,11 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
   const { state: importedState, importFromFile, importFromUrl, importing, retry, clear } =
     useImportedData();
 
-  const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
+  // The atlas's only data source is the live Google Sheet (loaded via
+  // ImportedDataProvider in Landing). We keep `seeded` as a typed name
+  // here so existing mergeAssets call sites still compile, but it is
+  // always an empty array now that seeds are dropped.
+  const seeded: LocationDoc[] = [];
   const hasImports =
     importedState.rows.length > 0 ||
     importedState.pending.length > 0 ||
