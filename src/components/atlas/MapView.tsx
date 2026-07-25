@@ -160,6 +160,8 @@ function DescriptionCard({
   const clampedLeft = Math.max(8, left);
 
   // On mobile, anchor as a bottom sheet within the map instead of pin-anchored.
+  // Contact links are always visible at the bottom of the card; only the
+  // description text scrolls above them.
   if (isMobile) {
     return (
       <motion.div
@@ -167,11 +169,12 @@ function DescriptionCard({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 20 }}
         transition={{ type: "spring", stiffness: 240, damping: 26 }}
-        className="pointer-events-auto absolute inset-x-3 bottom-3 z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
+        className="pointer-events-auto absolute inset-x-3 bottom-3 z-[600] flex flex-col rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
         style={{ maxHeight: "calc(100% - 1.5rem)" }}
         role="dialog"
         aria-label={`Description for ${loc.name}`}
       >
+        {/* Header */}
         <div className="flex items-start justify-between gap-2 rounded-t-2xl border-b border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6e0e1e]">
@@ -190,7 +193,8 @@ function DescriptionCard({
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="overflow-y-auto px-3 py-2" style={{ maxHeight: "30vh" }}>
+        {/* Scrollable description */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           <div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-[#0e0a0b]">
             {loc.description ? (
               loc.description
@@ -200,50 +204,51 @@ function DescriptionCard({
               </span>
             )}
           </div>
-          {(loc.website ||
-            loc.socialMedia ||
-            loc.contactName ||
-            loc.contactPhone ||
-            loc.contactEmail) && (
-            <div className="mt-2 flex flex-wrap gap-1.5 border-t border-[#6e0e1e1f] pt-2">
-              {loc.contactName && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
-                  <AtSign className="h-3 w-3 text-[#6e0e1e]" />
-                  <span className="truncate max-w-[120px]">{loc.contactName}</span>
-                </span>
-              )}
-              {loc.website && (
-                <a
-                  href={normalizeUrl(loc.website)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-                >
-                  <Globe className="h-3 w-3" /> Website
-                </a>
-              )}
-              {loc.contactPhone && (
-                <a
-                  href={`tel:${sanitizePhone(loc.contactPhone)}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
-                >
-                  <Phone className="h-3 w-3 text-[#6e0e1e]" />
-                  <span className="tabular-nums truncate max-w-[110px]">
-                    {loc.contactPhone}
-                  </span>
-                </a>
-              )}
-              {loc.contactEmail && (
-                <a
-                  href={`mailto:${loc.contactEmail}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
-                >
-                  <Mail className="h-3 w-3 text-[#6e0e1e]" /> Email
-                </a>
-              )}
-            </div>
-          )}
         </div>
+        {/* Contact links — always visible at the bottom */}
+        {(loc.website ||
+          loc.socialMedia ||
+          loc.contactName ||
+          loc.contactPhone ||
+          loc.contactEmail) && (
+          <div className="flex shrink-0 flex-wrap gap-1.5 border-t border-[#6e0e1e1f] px-3 py-2">
+            {loc.contactName && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
+                <AtSign className="h-3 w-3 text-[#6e0e1e]" />
+                <span className="truncate max-w-[120px]">{loc.contactName}</span>
+              </span>
+            )}
+            {loc.website && (
+              <a
+                href={normalizeUrl(loc.website)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+              >
+                <Globe className="h-3 w-3" /> Website
+              </a>
+            )}
+            {loc.contactPhone && (
+              <a
+                href={`tel:${sanitizePhone(loc.contactPhone)}`}
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+              >
+                <Phone className="h-3 w-3 text-[#6e0e1e]" />
+                <span className="tabular-nums truncate max-w-[110px]">
+                  {loc.contactPhone}
+                </span>
+              </a>
+            )}
+            {loc.contactEmail && (
+              <a
+                href={`mailto:${loc.contactEmail}`}
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+              >
+                <Mail className="h-3 w-3 text-[#6e0e1e]" /> Email
+              </a>
+            )}
+          </div>
+        )}
       </motion.div>
     );
   }
