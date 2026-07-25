@@ -185,6 +185,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // ok=false when no API key is set so this degrades into "no behavior
   // change" on a fresh install.
   const normalizeAddress = useAction(api.chatComplete.normalizeAddress);
+  const discoverTabsAction = useAction(api.sheets.discoverTabs);
 
   // Cache by normalized address key so repeated rows are instant.
   const coordCacheRef = useRef<
@@ -247,58 +248,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * the real title ("Gyms & Fitness Spaces" not "Gyms \\u0026 Fitness
    * Spaces").
    */
-/** Only these tabs are imported. Matches are case-insensitive and
- *  ignore surrounding whitespace; the comparison is done after decoding
- *  the HTML escape sequences (e.g. "\u0026" -> "&") so the names match
- *  the visible Google Sheet tab title.
- */
-const TARGET_TAB_NAMES: ReadonlySet<string> = new Set([
-  "Comm Fitness Classes & Prog",
-  "Basketball Courts",
-  "Gyms & Fitness Spaces",
-  "Parks & Rec",
-  "Aquatics & Swim Locations",
-  "MARTA Public Transit",
-]);
-
+  /** Fetch the whitelisted tabs of a publicly-shared Google Sheet.
+   *  Done server-side via a Convex action to avoid browser CORS issues
+   *  when fetching the `/edit` HTML page directly. */
   const discoverSheetTabs = useCallback(
-    async (sheetId: string, max = 15): Promise<DiscoveredTab[]> => {
+    async (sheetId: string): Promise<DiscoveredTab[]> => {
       try {
-        const htmlUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit?usp=sharing`;
-        const resp = await fetch(htmlUrl);
-        if (!resp.ok) return [];
-        const html = await resp.text();
-        const tabs: DiscoveredTab[] = [];
-        // Source bytes literally include \" pairs (the sheet HTML is
-        // double-escaped JSON inside an HTML attribute). The regex below
-        // treats those as literal characters — every \\ in source
-        // means "match one literal backslash", and every \\\\\" means
-        // "match one literal backslash followed by a literal quote".
-        // Verified against /tmp/sheet.html — discovers all 14 tabs.
-        const re = /,\"(\d{6,15})\",\[{\"1\":\[\[0,0,\"((?:[^\\]|\\.)+?)\"/g;
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(html)) !== null && tabs.length < max) {
-          const gid = m[1];
-          let rawName = m[2];
-          // Decode JS string escapes that appear in tab names.
-          // \u0026 -> &, \u0027 -> ', \u002F -> /, \" -> ", \\ -> \
-          rawName = rawName
-            .replace(/\\\\/g, "\\")
-            .replace(/\\u([0-9a-fA-F]{4})/gi, (_, h) =>
-              String.fromCharCode(parseInt(h, 16)),
-            )
-            .replace(/\\"/g, '"');
-          if (!rawName || !TARGET_TAB_NAMES.has(rawName.trim())) continue;
-          if (!tabs.some((t) => t.gid === gid)) {
-            tabs.push({ gid, name: rawName, rowCount: 0 });
-          }
-        }
-        return tabs;
-      } catch {
+        return (await discoverTabsAction({ sheetId })) as DiscoveredTab[];
+      } catch (err) {
+        console.error("[discoverSheetTabs] action failed", err);
         return [];
       }
     },
-    [],
+    [discoverTabsAction],
   );
 
   /** Fetch a CSV (optionally from multiple tabs of a Google Sheet) and
@@ -321,7 +283,7 @@ const TARGET_TAB_NAMES: ReadonlySet<string> = new Set([
       if (match) {
         const sheetId = match[1];
         // Discover tab gids + names from the sheet's HTML.
-        const tabs = await discoverSheetTabs(sheetId, 15);
+        const tabs = await discoverSheetTabs(sheetId);
 
         if (tabs.length === 0) {
           toast.error(
