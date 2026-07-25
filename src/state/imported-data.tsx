@@ -225,7 +225,9 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       const name = match
         ? `Google Sheet (${match[1].slice(0, 8)}…)`
         : url.split("/").pop() ?? "remote.csv";
-      await importFromText(text, name, "upload");
+      // Use "native" source so the sheet replaces the Convex seed data
+      // as the primary data source for the atlas.
+      await importFromText(text, name, "native");
     } catch (err) {
       console.error("URL import error", err);
       toast.error(
