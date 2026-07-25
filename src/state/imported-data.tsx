@@ -121,6 +121,8 @@ type ImportedContextValue = {
   importing: boolean;
   geocoding: boolean;
   importFromFile: (file: File) => Promise<void>;
+  /** Fetch a CSV from a public URL and import it through the same pipeline. */
+  importFromUrl: (url: string) => Promise<void>;
   retry: () => void;
   clear: () => void;
   /**
@@ -193,6 +195,41 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       console.error("CSV import error", err);
       toast.error(
         `Couldn't parse ${file.name}. Make sure it's a CSV or TSV file.`,
+      );
+    } finally {
+      setImporting(false);
+    }
+  }, []);
+
+  /** Fetch a CSV from a public URL and import it through the same pipeline. */
+  const importFromUrl = useCallback(async (url: string) => {
+    setImporting(true);
+    cancelRef.current.cancelled = true;
+    await new Promise((r) => setTimeout(r, 0));
+    cancelRef.current.cancelled = false;
+    try {
+      // Convert Google Sheets edit/share URLs to CSV export.
+      let fetchUrl = url;
+      const match = url.match(
+        /(?:docs\.google\.com\/spreadsheets\/d\/|spreadsheets\/d\/)([a-zA-Z0-9_-]+)/,
+      );
+      if (match) {
+        fetchUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv`;
+      }
+      const resp = await fetch(fetchUrl);
+      if (!resp.ok) {
+        toast.error(`Could not fetch CSV from URL (HTTP ${resp.status}).`);
+        return;
+      }
+      const text = await resp.text();
+      const name = match
+        ? `Google Sheet (${match[1].slice(0, 8)}…)`
+        : url.split("/").pop() ?? "remote.csv";
+      await importFromText(text, name, "upload");
+    } catch (err) {
+      console.error("URL import error", err);
+      toast.error(
+        `Couldn't load CSV from the provided URL. Make sure it's publicly accessible.`,
       );
     } finally {
       setImporting(false);
@@ -795,11 +832,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       importing,
       geocoding: state.progress.active,
       importFromFile,
+      importFromUrl,
       retry,
       clear,
       seedBackfill,
     }),
-    [state, importing, importFromFile, retry, clear, seedBackfill],
+    [state, importing, importFromFile, importFromUrl, retry, clear, seedBackfill],
   );
 
   return (

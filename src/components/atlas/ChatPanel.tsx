@@ -9,6 +9,7 @@ import {
   Database,
   FileSpreadsheet,
   Info,
+  Link,
   Loader2,
   MapPin,
   Sparkles,
@@ -343,12 +344,15 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const [showGeoDetail, setShowGeoDetail] = useState(false);
+  const [showSheetUrlInput, setShowSheetUrlInput] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
 
   const triggerLlm = useAction(api.chatComplete.chatComplete);
 
-  const { state: importedState, importFromFile, importing, retry, clear } =
+  const { state: importedState, importFromFile, importFromUrl, importing, retry, clear } =
     useImportedData();
 
   const seeded = (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
@@ -807,6 +811,61 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
             className="hidden"
             onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
           />
+          <button
+            type="button"
+            onClick={() => {
+              setShowSheetUrlInput((v) => !v);
+              setTimeout(() => urlInputRef.current?.focus(), 100);
+            }}
+            disabled={importing}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border/70 bg-background/60 px-3 text-[12px] font-medium text-muted-foreground transition hover:border-accent/60 hover:text-foreground disabled:opacity-50"
+            title="Load assets from a public Google Sheets URL"
+          >
+            <Link className="h-3.5 w-3.5" />
+            Sheet URL
+          </button>
+          <AnimatePresence>
+            {showSheetUrlInput && (
+              <motion.div
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: 200, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={urlInputRef}
+                    type="url"
+                    value={sheetUrl}
+                    onChange={(e) => setSheetUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && sheetUrl.trim()) {
+                        void importFromUrl(sheetUrl.trim());
+                        setSheetUrl("");
+                        setShowSheetUrlInput(false);
+                      }
+                    }}
+                    placeholder="Paste Google Sheets URL…"
+                    className="h-9 w-full rounded-lg border border-border/70 bg-background/60 px-2.5 text-[12px] text-foreground placeholder:text-muted-foreground/60 focus:border-accent/60 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sheetUrl.trim()) {
+                        void importFromUrl(sheetUrl.trim());
+                        setSheetUrl("");
+                        setShowSheetUrlInput(false);
+                      }
+                    }}
+                    disabled={!sheetUrl.trim() || importing}
+                    className="inline-flex h-9 items-center gap-1 rounded-lg bg-primary px-2.5 text-[12px] font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="relative flex max-h-[140px] flex-1 items-end gap-2 overflow-y-auto rounded-xl border border-border/70 bg-background/60 p-1.5 shadow-card focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-ring/30">
             <Textarea
               value={input}

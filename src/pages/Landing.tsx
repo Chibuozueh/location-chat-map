@@ -24,7 +24,11 @@ function LandingInner() {
   const seeded =
     (useQuery(api.locations.list) as LocationDoc[] | undefined) ?? [];
   const top = useQuery(api.locations.topPicks);
-  const { state: importedState, seedBackfill } = useImportedData();
+  const { state: importedState, seedBackfill, importFromUrl } = useImportedData();
+
+  // Default Google Sheets URL — the live asset spreadsheet.
+  const GOOGLE_SHEETS_URL =
+    "https://docs.google.com/spreadsheets/d/1zmV_whgwxfL7xEOvQXbWLU3i56fgPko1Q01UbWf7jVA/export?format=csv";
 
   // First-paint backfill: route SEED rows that lack lat/lng through the
   // existing Cerebras → Nominatim cascade. Tracked by a stable slug-list
@@ -42,6 +46,14 @@ function LandingInner() {
     seedBackfillSigRef.current = sig;
     seedBackfill(seeded);
   }, [seeded, seedBackfill]);
+
+  // Auto-fetch the Google Sheets CSV on first paint (once).
+  const sheetsFetchedRef = useRef(false);
+  useEffect(() => {
+    if (sheetsFetchedRef.current) return;
+    sheetsFetchedRef.current = true;
+    void importFromUrl(GOOGLE_SHEETS_URL);
+  }, [importFromUrl]);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [pickerClusterKey, setPickerClusterKey] = useState<string | null>(null);
