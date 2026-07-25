@@ -716,7 +716,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                         import is the source). Shows gid → row count per tab
                         so the user can confirm every expected tab loaded. */}
                     {importedState.discoveredTabs.length > 0 && (
-                      <div className="flex flex-col gap-1 text-[10.5px]">
+                      <div className="flex max-h-40 flex-col gap-1 overflow-y-auto pr-1 text-[10.5px]">
                         <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-foreground/70">
                           <Database className="h-3 w-3" />
                           Source · {importedState.discoveredTabs.length} tab

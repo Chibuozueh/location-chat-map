@@ -247,18 +247,32 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
    * the real title ("Gyms & Fitness Spaces" not "Gyms \\u0026 Fitness
    * Spaces").
    */
+/** Known Google-Sheet tabs that are NOT data (reference / schema /
+ *  research). Filtered out during tab discovery so they do not
+ * pollute the asset rows or inflate the rejected-row count. GIDs
+ * are permanent - safe to hardcode.
+ */
+const REFERENCE_TAB_GIDS: ReadonlySet<string> = new Set([
+  "77035068",   // Category Dictionary
+  "476765564",  // Asset Attributes
+  "1232281477", // Items to Research
+]);
+
   const discoverSheetTabs = useCallback(
-    async (sheetId: string, max = 3): Promise<DiscoveredTab[]> => {
+    async (sheetId: string, max = 15): Promise<DiscoveredTab[]> => {
       try {
         const htmlUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/edit?usp=sharing`;
         const resp = await fetch(htmlUrl);
         if (!resp.ok) return [];
         const html = await resp.text();
         const tabs: DiscoveredTab[] = [];
-        // Source bytes: ,"<digits>",[{"1":[[0,0,"<TABNAME>"
-        // Each `\` in source needs to be `\\` in regex literal, and each
-        // `[` / `{` needs `\[` / `\{`. Quote chars are literal.
-        const re = new RegExp(`,\"(\d{6,15})\",\[\{\"1\":\[\[0,0,\"((?:[^"\\]+|\[^"])+?)\"`, 'g');
+        // Source bytes literally include \" pairs (the sheet HTML is
+        // double-escaped JSON inside an HTML attribute). The regex below
+        // treats those as literal characters — every \\ in source
+        // means "match one literal backslash", and every \\\\\" means
+        // "match one literal backslash followed by a literal quote".
+        // Verified against /tmp/sheet.html — discovers all 14 tabs.
+        const re = /,\"(\d{6,15})\",\[{\"1\":\[\[0,0,\"((?:[^\\]|\\.)+?)\"/g;
         let m: RegExpExecArray | null;
         while ((m = re.exec(html)) !== null && tabs.length < max) {
           const gid = m[1];
@@ -271,6 +285,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             )
             .replace(/\\"/g, '"')
             .replace(/\\\\/g, "\\");
+          if (REFERENCE_TAB_GIDS.has(gid)) continue;
           if (!tabs.some((t) => t.gid === gid)) {
             tabs.push({ gid, name: rawName || null, rowCount: 0 });
           }
@@ -303,7 +318,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       if (match) {
         const sheetId = match[1];
         // Discover tab gids + names from the sheet's HTML.
-        const tabs = await discoverSheetTabs(sheetId, 3);
+        const tabs = await discoverSheetTabs(sheetId, 15);
 
         if (tabs.length === 0) {
           toast.error(
