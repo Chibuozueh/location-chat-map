@@ -16,11 +16,11 @@ export function AppHeader() {
           >
             <MorehouseMark size={32} />
           </motion.span>
-          <div className="hidden flex-col leading-none sm:flex">
-            <span className="font-display text-[15px] font-bold uppercase tracking-[0.04em] text-[#6E0E1E]">
+          <div className="flex flex-col leading-none">
+            <span className="font-display text-[13px] font-bold uppercase tracking-[0.04em] text-[#6E0E1E] sm:text-[15px]">
               Morehouse
             </span>
-            <span className="mt-1 font-sans text-[9.5px] font-bold uppercase tracking-[0.22em] text-black">
+            <span className="mt-0.5 font-sans text-[8.5px] font-bold uppercase tracking-[0.18em] text-black sm:mt-1 sm:text-[9.5px] sm:tracking-[0.22em]">
               Chelsea Egbuchunam
             </span>
           </div>
