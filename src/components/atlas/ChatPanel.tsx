@@ -403,23 +403,20 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
     ],
   );
 
-  // During the pre-validation gate, the only reference data the chat
-  // can lean on is the curated Convex seeds. Once the gate opens, both
-  // the seeds (if hasImports=false) AND the validated imported rows
-  // become referenceable for Gemini narration.
-  const referenceCount =
-    preValidating && nativeCsvActive
-      ? seeded.length
-      : merged.mappable.length + merged.chatOnly.length;
+  // The Chat's reference data is the imported Google-Sheet rows. We
+  // no longer fall back to the seed list (curated defaults were dropped
+  // — the Sheet is the single source of truth). When the gate is closed
+  // we wait briefly; once it opens, the imported bucket feeds Gemini.
+  const referenceCount = merged.mappable.length + merged.chatOnly.length;
   const referenceLabel = preValidating
     ? nativeCsvActive
       ? `Pre-validating ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"} via Cerebras\u2026`
       : `Geocoding ${importedState.pending.length} address${importedState.pending.length === 1 ? "" : "es"}\u2026`
     : hasImports
       ? importedState.source === "native"
-        ? `${referenceCount} from public/data/${importedState.filename ?? "atlas.csv"}`
+        ? `${referenceCount} from Google Sheet · ${importedState.discoveredTabs.length || 1} tab${(importedState.discoveredTabs.length || 1) === 1 ? "" : "s"}`
         : `${referenceCount} ${merged.chatOnly.length ? "(some ungeocodable) " : ""}from your uploaded file`
-      : "12 curated Southwest Atlanta assets";
+      : "Loading Google Sheet\u2026";
 
   const resultServer = useQuery(
     api.locations.search,
