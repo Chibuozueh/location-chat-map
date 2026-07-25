@@ -307,11 +307,49 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
     cancelRef.current.cancelled = true;
     setState((prev) => {
       if (!prev.filename && !prev.rows.length) return prev;
+
+      // Native seed backfill: just dismiss the UI chip without destroying
+      // the already-geocoded rows so assets don't vanish from the map.
+      // The x button on the chip should only hide the status bar, not
+      // unload all the data.
+      if (prev.source === "native") {
+        return {
+          ...prev,
+          filename: null,
+          source: null,
+          importedAt: null,
+          progress: {
+            total: 0,
+            done: 0,
+            cached: 0,
+            exact: 0,
+            relaxed: 0,
+            zipCentroid: 0,
+            cerebrasCleaned: 0,
+            cerebrasSkipped: 0,
+            cerebrasError: 0,
+            cerebrasCallsMade: 0,
+            cerebrasModelLabel: null,
+            failed: 0,
+            active: false,
+          },
+          released: true,
+        };
+      }
+
+      // User upload: full clear — user expects removing an upload to
+      // unload its rows from the atlas.
       toast(`Cleared ${prev.rows.length + prev.pending.length} imported entries.`);
       return EMPTY;
     });
-    coordCacheRef.current.clear();
-    normalizeCacheRef.current.clear();
+    // Only clear caches for upload-sourced clears; native seed geocode
+    // rows stay cached so a re-show doesn't need fresh API calls.
+    setState((prev) => {
+      if (prev.source !== "upload") return prev;
+      coordCacheRef.current.clear();
+      normalizeCacheRef.current.clear();
+      return prev;
+    });
   }, []);
 
   // Re-run the cascade on every previously-failed row. We move the failed
