@@ -7,6 +7,7 @@ import { AtlasHero } from "@/components/atlas/AtlasHero";
 import { MapView } from "@/components/atlas/MapView";
 import { ChatPanel } from "@/components/atlas/ChatPanel";
 import { LocationGrid } from "@/components/atlas/LocationGrid";
+import { CategoryFilter } from "@/components/atlas/CategoryFilter";
 import {
   ImportedDataProvider,
   clusterByAddress,
@@ -54,6 +55,8 @@ function LandingInner() {
   const [mapFocus, setMapFocus] = useState(false);
   /** When true, only clusters whose members are currently open are shown. */
   const [openNowFilter, setOpenNowFilter] = useState(false);
+  /** Selected asset category filter; null means "all". */
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const exploreRef = useRef<HTMLDivElement | null>(null);
 
   // Helper: check whether an asset is currently open based on its hours.
@@ -117,11 +120,47 @@ function LandingInner() {
     [merged, selected],
   );
 
+  // Derive the ordered list of unique asset categories from the loaded data.
+  const allAssets = useMemo(
+    () => [...merged.mappable, ...merged.chatOnly],
+    [merged.mappable, merged.chatOnly],
+  );
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of allAssets) {
+      const c = a.category?.trim().toLowerCase();
+      if (c) set.add(c);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allAssets]);
+
+  // Filter helpers. Category and open-now can be composed.
+  const matchesCategory = useCallback(
+    (asset: AnyAsset) => {
+      if (!selectedCategory) return true;
+      return asset.category?.trim().toLowerCase() === selectedCategory;
+    },
+    [selectedCategory],
+  );
+  const isOpenNow = useCallback(
+    (asset: AnyAsset) => isAssetOpenNow(asset),
+    [],
+  );
+
+  const filteredMappable = useMemo(
+    () => merged.mappable.filter((a) => matchesCategory(a)),
+    [merged.mappable, matchesCategory],
+  );
+  const filteredChatOnly = useMemo(
+    () => merged.chatOnly.filter((a) => matchesCategory(a)),
+    [merged.chatOnly, matchesCategory],
+  );
+
   // Group mappable assets by address so the map renders one pin per shared
   // address. Members of each cluster are preserved (used for the picker).
   const clusters = useMemo(
-    () => clusterByAddress(merged.mappable as LocationDoc[]),
-    [merged.mappable],
+    () => clusterByAddress(filteredMappable as LocationDoc[]),
+    [filteredMappable],
   );
 
   // Wrappers that keep the picker and selection mutually exclusive.
@@ -181,9 +220,9 @@ function LandingInner() {
   const displayClusters = useMemo(() => {
     if (!openNowFilter) return clusters;
     return clusters.filter((c) =>
-      c.members.some((m) => isAssetOpenNow(m as AnyAsset)),
+      c.members.some((m) => isOpenNow(m as AnyAsset)),
     );
-  }, [clusters, openNowFilter]);
+  }, [clusters, openNowFilter, isOpenNow]);
   const handleToggleOpenNow = useCallback(() => {
     setOpenNowFilter((prev) => !prev);
   }, []);
@@ -207,6 +246,20 @@ function LandingInner() {
           openNowFilter={openNowFilter}
           onToggleOpenNow={handleToggleOpenNow}
         />
+
+        <div className="mt-6">
+          <CategoryFilter
+            categories={categories}
+            selected={selectedCategory}
+            onSelect={setSelectedCategory}
+            counts={categories.reduce((acc, c) => {
+              acc[c] = allAssets.filter(
+                (a) => a.category?.trim().toLowerCase() === c,
+              ).length;
+              return acc;
+            }, {} as Record<string, number>)}
+          />
+        </div>
 
         <div
           ref={exploreRef}
@@ -287,7 +340,7 @@ function LandingInner() {
                 />
               ) : (
                 <LocationGrid
-                  locations={[...merged.mappable, ...merged.chatOnly] as LocationDoc[]}
+                  locations={[...filteredMappable, ...filteredChatOnly] as LocationDoc[]}
                   selectedSlug={selected}
                   onSelect={handleSelectSlug}
                   clusterSizes={((): Record<string, number> => {
