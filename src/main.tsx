@@ -8,8 +8,11 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
-// Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
+// Auth and 404 are secondary routes, so keep them lazy. Landing is the
+// root route — eager import it so preview/dev environments never fail on a
+// dynamic fetch for the entry page and we get a clearer stack if the module
+// itself has an initialization error.
+import Landing from "./pages/Landing.tsx";
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
