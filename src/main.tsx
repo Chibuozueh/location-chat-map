@@ -8,8 +8,10 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
-// Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
+// Auth and 404 are secondary routes, keep them lazy. Landing is the root
+// route; eager import it so Vite's dev-server lazy-fetch bug is bypassed
+// and any real module-evaluation error surfaces immediately.
+import Landing from "./pages/Landing.tsx";
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 

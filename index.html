@@ -18,6 +18,21 @@
 
 <body>
   <div id="root"></div>
+  <!-- Diagnostic: surface top-level module-evaluation errors so we can
+       see the real cause instead of a blank page. Removed once fixed. -->
+  <script>
+    window.onerror = function (msg, url, line, col, error) {
+      const el = document.getElementById("root");
+      if (el) {
+        el.innerHTML =
+          '<div style="padding:24px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#b91c1c;background:#fff1f2;min-height:100vh;"><strong>Top-level runtime error:</strong><br>' +
+          String(msg) +
+          '<br>at ' + url + ':' + line + ':' + col + '<br><br>' +
+          (error && error.stack ? error.stack : '') +
+          '</div>';
+      }
+    };
+  </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 
