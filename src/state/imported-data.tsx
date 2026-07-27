@@ -20,6 +20,7 @@ import {
   type CoordAccuracy,
   type ImportSummary,
   importCsv,
+  isDefaultHours,
   parsePriceTierText,
 } from "@/lib/csv-import";
 import type { LocationDoc } from "@/components/atlas/types";
@@ -42,6 +43,14 @@ export type GeocodeProgress = {
   cerebrasSkipped: number;
   /** Rows where the Cerebras call itself errored (transient). */
   cerebrasError: number;
+  /** Rows whose hours came from the OpenRouter `extractHours` AI
+   *  fallback (regex fast path didn't recognize the format). Surfaced
+   *  in the chip so the user can see AI hours calls landing too. */
+  hoursAIParsed: number;
+  /** Rows whose hours stayed on the `defaultHours()` shape (regex+AI
+   *  both missed; description was either empty or unparseable).
+   *  Useful for the chat-panel info popover when debugging. */
+  hoursDefault: number;
   /** Number of times we've actually hit the map-side `normalizeAddress`
    *  action (whether the result was a clean, skip, or error). Surfaced in
    *  the UI so the user can see the API is being called and how many
@@ -124,6 +133,8 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   failed: 0,
   active: false,
   currentTab: null,
+  hoursAIParsed: 0,
+  hoursDefault: 0,
 };
 
 const EMPTY: ImportedState = {
@@ -190,6 +201,13 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
   // ok=false when no API key is set so this degrades into "no behavior
   // change" on a fresh install.
   const normalizeAddress = useAction(api.chatComplete.normalizeAddress);
+  // Hours-of-operation extractor — OpenRouter fallback for descriptions
+  // that the regex fast path in `parseHoursFromDescription` doesn't
+  // recognize. Routes through the SAME `Map_Router_Key` provider so
+  // the user can verify hours+address extraction from a single env var.
+  // Same env-var rule applies: when no key is set, returns ok=false so
+  // rows gracefully stay on their regex-time or default hours.
+  const extractHoursAction = useAction(api.chatComplete.extractHours);
   const discoverTabsAction = useAction(api.sheets.discoverTabs);
 
   // Cache by normalized address key so repeated rows are instant.
@@ -212,6 +230,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
       | { ok: false }
     >
   >(new Map());
+
+  // Cache successful hours-extraction calls keyed by slug. The
+  // `extractHours` OpenRouter call is the only path that fills this
+  // cache; the regex fast path doesn't need it because it lands
+  // synchronously at parse time.
+  const hoursCacheRef = useRef<Map<string, AtlasAsset["hours"]>>(new Map());
 
   // Cancellation flag so an external `clear()` aborts the loop cleanly.
   const cancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
@@ -481,6 +505,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           failed: 0,
           active: pendingCount > 0,
           currentTab: null,
+          hoursAIParsed: 0,
+          hoursDefault: 0,
         },
         source,
         released: true,
@@ -546,6 +572,8 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             failed: 0,
             active: false,
             currentTab: null,
+            hoursAIParsed: 0,
+            hoursDefault: 0,
           },
           // Dismiss the tab list too — the user is hiding the chip, so
           // the info popover shouldn't keep showing the old tab rows.
@@ -827,6 +855,42 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
 
         if (cancel.cancelled) return;
 
+        // Step 4: hours-of-operation extraction. The regex fast path in
+        // `parseHoursFromDescription` already ran at CSV parse time and
+        // filled `doc.hours` when the columns mentioned a recognizable
+        // format ("Mon-Fri 9am-5pm", "24/7", etc.). For rows where the
+        // regex couldn't parse, `doc.hours` is still on `defaultHours()`
+        // — those rows get a second chance via OpenRouter's structured
+        // JSON call. Cached on slug so re-imports / Retry are free.
+        let hoursFromAI: AtlasAsset["hours"] | null = null;
+        let hoursOutcome: "regex" | "ai" | "default" = "regex";
+        const description = (doc.description ?? "").trim();
+        if (isDefaultHours(doc.hours) && description.length > 0) {
+          const hoursCacheKey = `hours:${doc.slug}`;
+          const cached = hoursCacheRef.current.get(hoursCacheKey);
+          if (cached) {
+            hoursFromAI = cached;
+            hoursOutcome = "ai";
+          } else {
+            try {
+              const hoursResult = await extractHoursAction({
+                description: doc.description ?? "",
+                assetName: doc.name,
+              });
+              if (hoursResult.ok && hoursResult.hours) {
+                hoursFromAI = hoursResult.hours;
+                hoursOutcome = "ai";
+                hoursCacheRef.current.set(hoursCacheKey, hoursFromAI);
+              } else {
+                hoursOutcome = "default";
+              }
+            } catch (err) {
+              console.warn("[hours-extract] threw", err);
+              hoursOutcome = "default";
+            }
+          }
+        }
+
         // Decide this row's destination. Successful rows go into
         // `state.rows` immediately so the map plots them as they come in;
         // failed rows land in `state.failed` so the Retry chip surfaces
@@ -839,6 +903,11 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 lng: coord.lng,
                 needsGeocode: false,
                 coordAccuracy: accuracy,
+                // Apply the AI-extracted hours (if any) over the regex/
+                // default schedule so the chat panel's "Open Now" filter
+                // sees the user-confirmed schedule rather than the
+                // generic M–F 10–17 placeholder.
+                hours: hoursFromAI || doc.hours,
               }
             : null;
         const failedItem: {
@@ -907,6 +976,12 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 cerebrasAttempted && lastProviderLabel
                   ? lastProviderLabel
                   : prev.progress.cerebrasModelLabel,
+              hoursAIParsed:
+                prev.progress.hoursAIParsed +
+                (hoursOutcome === "ai" ? 1 : 0),
+              hoursDefault:
+                prev.progress.hoursDefault +
+                (hoursOutcome === "default" ? 1 : 0),
               active: remainingPending.length > 0,
             },
           };

@@ -826,6 +826,411 @@ function defaultHours(): AtlasAsset["hours"] {
   };
 }
 
+/** A weekly schedule with every day marked closed ("—"/"—"). Used when
+ *  the description says something like "By appointment" or "Call for
+ *  hours" — the row is searchable but never matches the "Open Now"
+ *  filter. The original JSON shape is preserved for downstream parse
+ *  helpers (`todayHoursLine`, `isOpenAt`). */
+function dailySchedule(
+  open: string,
+  close: string,
+): AtlasAsset["hours"] {
+  const day = { open, close };
+  return {
+    mon: { ...day },
+    tue: { ...day },
+    wed: { ...day },
+    thu: { ...day },
+    fri: { ...day },
+    sat: { ...day },
+    sun: { ...day },
+  };
+}
+
+type DayKey = keyof AtlasAsset["hours"];
+
+// ----------------------------------------------------------------------------
+//  Hours-of-operation extraction from the description column.
+//
+//  Two-tier pipeline:
+//
+//    1. Regex fast path (this function) — handles the most common
+//       spreadsheet conventions: "Mon-Fri 9am-5pm", "Tuesday 11-1",
+//       "Mon, Wed, Fri 10-2", "Weekdays 8am-8pm / Weekends 10-6",
+//       "24/7", "Daily 8am-8pm", "8:30 AM – 5:00 PM", etc. When the
+//       description is unambiguous the regex returns a full weekly
+//       schedule so the upstream parser never has to pay an AI call.
+//
+//    2. OpenRouter fallback (`extractHours` Convex action) — kicks in
+//       when this regex returns null. Returns the same shape so the
+//       caller doesn't branch.
+//
+//  Output guarantees:
+//    * Returns a valid AtlasAsset["hours"] object when ANY day-level
+//      information can be extracted (regex confidence or AI returned
+//      ok=true). Days with no information default to "—" (closed).
+//    * Returns null when the regex can't confidently parse AND the
+//      caller will route to AI — clean signal for "needs OpenRouter".
+//    * NEVER throws. Bad inputs default to the closed-everywhere shape
+//      rather than throwing, so a row with a malformed description
+//      still plots the marker and the user-visible "Open Now" toggle
+//      stays truthful.
+//
+//  Cost: this is pure string scanning, no AI, no network — runs in
+//  microseconds per row.
+// ----------------------------------------------------------------------------
+
+/** Day tokens ordered to match the canonical `mon..sun` shape. Each matches
+ *  the abbreviated ("Mon") and full ("Monday") forms, word-boundary safe. */
+const DAY_TOKENS: Array<{
+  key: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+  full: string;
+  abbrev: string;
+}> = [
+  { key: "mon", full: "monday", abbrev: "mon" },
+  { key: "tue", full: "tuesday", abbrev: "tue" },
+  { key: "wed", full: "wednesday", abbrev: "wed" },
+  { key: "thu", full: "thursday", abbrev: "thu" },
+  { key: "fri", full: "friday", abbrev: "fri" },
+  { key: "sat", full: "saturday", abbrev: "sat" },
+  { key: "sun", full: "sunday", abbrev: "sun" },
+];
+
+/** Token matcher for one day — used to read user-written days back out of
+ *  a parsed description. Order = full word first so `Monday-Fri` is
+ *  always lex-match, not just the 3-letter abbrev. */
+const DAY_MATCH_RE =
+  /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b|\b(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/i;
+
+/** Convert a day token (full or abbrev, any case) to the canonical key.
+ *  Returns null if no match. */
+function dayKeyFromToken(tok: string): DayKey | null {
+  const norm = tok.toLowerCase().replace(/[.,]/g, "");
+  for (const d of DAY_TOKENS) {
+    if (norm === d.full || norm === d.abbrev) return d.key;
+  }
+  if (norm === "tues") return "tue";
+  if (norm === "thur" || norm === "thurs") return "thu";
+  return null;
+}
+
+/** Parse a single time string into a canonical "HH:MM" 24-hour value.
+ *  Recognizes: `9`, `9:30`, `9 am`, `9:30 PM`, `21:00`, `9pm`, `9.30am`.
+ *  Returns null on unparseable input. */
+function parseTimeToken(raw: string): string | null {
+  if (!raw) return null;
+  const s = raw.trim().replace(/[.,]/g, ":");
+  // 12-hour with am/pm: "9", "9:30", "9 am", "9:30pm"
+  const ampm = s.match(
+    /^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$/i,
+  );
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = ampm[2] ? parseInt(ampm[2], 10) : 0;
+    const suf = (ampm[3] ?? "").toLowerCase().replace(/\./g, "");
+    if (Number.isNaN(h) || h < 0 || h > 24) return null;
+    if (m < 0 || m > 59) return null;
+    if (suf === "pm" && h < 12) h += 12;
+    if (suf === "am" && h === 12) h = 0;
+    if (h < 0 || h > 23) return null;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+/** Match a time range inside a free-form segment. Tries the longest
+ *  patterns first so we capture "11:00 AM – 1:00 PM" before falling back
+ *  to bare numbers. Returns {open, close} as "HH:MM" 24h, or null. */
+function parseTimeRange(seg: string): { open: string; close: string } | null {
+  // Strip en/em dashes / hyphens to a canonical "–" so the regex stays
+  // a single readable character class.
+  const norm = seg.replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-");
+  // Pairs of clock times separated by a hyphen or "to". Captures four
+  // groups: open-h, open-m, suf, close-h, close-m, csuf.
+  const ranged = norm.match(
+    /(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?/i,
+  );
+  if (!ranged) return null;
+  const rebuild = (h: string, m: string | undefined, suf: string | undefined) =>
+    parseTimeToken(`${h}${m ? `:${m}` : ""}${suf ?? ""}`);
+  const open = rebuild(ranged[1], ranged[2], ranged[3]);
+  const close = rebuild(ranged[4], ranged[5], ranged[6]);
+  if (!open || !close) return null;
+  return { open, close };
+}
+
+/** Pull a comma/semicolon/newline/slash-delimited chunk out of the
+ *  description that's likely to contain a single day/time statement.
+ *  Splits on `;`, `\n`, and `/` first (the loud delimiters), then on
+ *  `,` only when no adjacent day/time tokens are on the same side. */
+function splitDayTimeSegments(text: string): string[] {
+  // Split on the loud delimiters first.
+  const loud = text.split(/[\n;]| ?\/ ?/g);
+  return loud
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Translate a `Mon`, `Mon-Fri`, `Mon, Wed, Fri`, `Weekdays`, `Weekends`,
+ *  `Daily`, `24/7`, `Mon-Sun`, etc. into a set of day keys. */
+function expandDayToken(seq: string): Set<DayKey> | null {
+  const norm = seq.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!norm) return null;
+
+  // Whole-day keywords: these short-circuit to a known set.
+  if (/^(24\s*\/\s*7|24\s*hours?|open\s*24|every\s*day|daily|7\s*days\s*a\s*week)$/i
+    .test(norm)) {
+    return new Set<DayKey>(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  }
+  if (/^weekdays?$/i.test(norm)) {
+    return new Set<DayKey>(["mon", "tue", "wed", "thu", "fri"]);
+  }
+  if (/^weekends?$/i.test(norm)) {
+    return new Set<DayKey>(["sat", "sun"]);
+  }
+
+  // Range like "Mon-Fri" / "Mon to Fri" / "Mon – Fri" / "Monday-Friday".
+  // Specifically split on `-` / `to` / `–` / `—`, but ONLY when the
+  // tokenization yields two valid day tokens — otherwise this is a
+  // midnight-crossing time range like "9pm-2am" and we return null.
+  const rangeParts = norm.split(/\s*(?:-|–|—|to)\s*/i);
+  if (rangeParts.length === 2) {
+    const start = dayKeyFromToken(rangeParts[0]);
+    const end = dayKeyFromToken(rangeParts[1]);
+    if (start && end) {
+      const order: DayKey[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+      const startIdx = order.indexOf(start);
+      const endIdx = order.indexOf(end);
+      if (startIdx >= 0 && endIdx >= 0) {
+        const out = new Set<DayKey>();
+        if (startIdx <= endIdx) {
+          for (let i = startIdx; i <= endIdx; i++) out.add(order[i]);
+        } else {
+          // Wrap-around (e.g. "Fri-Mon" → Fri, Sat, Sun, Mon).
+          for (let i = startIdx; i < order.length + endIdx; i++) {
+            out.add(order[i % order.length]);
+          }
+        }
+        return out;
+      }
+    }
+  }
+
+  // Comma-list: "Mon, Wed, Fri".
+  if (norm.includes(",")) {
+    const out = new Set<DayKey>();
+    for (const part of norm.split(",")) {
+      const k = dayKeyFromToken(part.trim());
+      if (k) out.add(k);
+    }
+    return out.size ? out : null;
+  }
+
+  // Single-day token.
+  const single = dayKeyFromToken(norm);
+  if (single) return new Set<DayKey>([single]);
+
+  return null;
+}
+
+/** Hours-of-operation fast path. Returns a complete weekly schedule when
+ *  the description's hours section can be extracted by regex. Returns
+ *  `null` when the regex isn't confident — the caller should route to
+ *  the OpenRouter `extractHours` action for ambiguous descriptions.
+ *
+ *  Keys the AI fallback on these cases:
+ *    - Vague ("By appointment", "Call for hours", "TBD", "varies")
+ *    - Empty
+ *    - Has hours mentions but no per-day structure the regex can lock onto
+ *    - Time-only with no day info ("Open 9-5")
+ *
+ *  Returns a closed-everywhere shape (`"—"` both open and close) when:
+ *    - "By appointment" / "call for hours" / "varies" / "TBD"
+ *      (so the "Open Now" toggle stays false for these rows).
+ */
+export function parseHoursFromDescription(
+  description: string | null | undefined,
+): AtlasAsset["hours"] | null {
+  if (!description) return null;
+  const text = description.trim();
+  if (!text) return null;
+
+  // Phrases that mean "not regularly scheduled" — fill all 7 days as
+  // closed so the Open Now toggle excludes them.
+  const lower = text.toLowerCase();
+  if (
+    /\b(by\s*appointment|call\s*for\s*hours|by\s*req|by\s*request|tbd|to\s*be\s*determined|varies|tba|tba\.|n\/a|not\s*listed)\b/
+      .test(lower)
+  ) {
+    return dailySchedule("—", "—");
+  }
+
+  // Identify the segment(s) of the description that contain hours info.
+  // We bias toward sentences / phrases that mention time words so we don't
+  // mistakenly parse a narrative that mentions "Saturday" without an
+  // attached schedule.
+  const timeWordRe = /(am|pm|24\s*\/\s*7|24\s*hours|midnight|noon)/i;
+  const hourHeaderRe = /\bhours?\b|operating\s*hours?|schedule/i;
+  const segments = splitDayTimeSegments(text);
+  let working = new Map<DayKey, { open: string; close: string }>();
+
+  let foundAnyTime = false;
+
+  for (const segRaw of segments) {
+    const seg = segRaw.trim();
+    if (!seg) continue;
+    const segLower = seg.toLowerCase();
+
+    // Skip segments that don't even mention a time and aren't a known
+    // whole-week keyword — this is the "narrative" branch that should
+    // go to the AI fallback rather than be mis-parsed.
+    const isKeyword =
+      /^(24\s*\/\s*7|24\s*hours?|every\s*day|daily|weekdays?|weekends?)$/i.test(seg);
+    if (!timeWordRe.test(seg) && !isKeyword && !hourHeaderRe.test(seg)) continue;
+
+    // 24/7 / "Open 24 hours" — every day, 00:00 – 23:59 (we use 00:00 –
+    // 24:00 shorthand so the chip renders "Open 24 hours"). parseClock
+    // doesn't support 24:00 so we keep this strictly under 23:59 by
+    // returning an "all day" sentinel the todayHoursLine helper already
+    // handles via fmtClock.
+    if (/^(24\s*\/\s*7|24\s*hours?|open\s*24)\b/i.test(seg)) {
+      return dailySchedule("00:00", "23:59");
+    }
+
+    // Whole-week keyword with optional attached time:
+    //   "Weekdays 8am-8pm"  →  mon–fri 08:00–20:00
+    //   "Daily 9-5"         →  all 7 09:00–17:00
+    if (/^weekdays?\b/i.test(seg)) {
+      const after = seg.replace(/^weekdays?\s*/i, "").trim();
+      if (after) {
+        const range = parseTimeRange(after);
+        if (range) {
+          ["mon", "tue", "wed", "thu", "fri"].forEach((d) =>
+            working.set(d as DayKey, range)
+          );
+          foundAnyTime = true;
+          continue;
+        }
+      }
+    }
+    if (/^weekends?\b/i.test(seg)) {
+      const after = seg.replace(/^weekends?\s*/i, "").trim();
+      if (after) {
+        const range = parseTimeRange(after);
+        if (range) {
+          ["sat", "sun"].forEach((d) =>
+            working.set(d as DayKey, range)
+          );
+          foundAnyTime = true;
+          continue;
+        }
+      }
+    }
+    if (/^(every\s*day|daily)\b/i.test(seg)) {
+      const after = seg.replace(/^(every\s*day|daily)\s*/i, "").trim();
+      if (after) {
+        const range = parseTimeRange(after);
+        if (range) {
+          ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].forEach((d) =>
+            working.set(d as DayKey, range)
+          );
+          foundAnyTime = true;
+          continue;
+        }
+      }
+    }
+
+    // Strip an optional "Hours:" / "Operating hours:" header.
+    const cleaned = seg.replace(/^hours?:?\s*|^operating\s*hours?:?\s*/i, "");
+
+    // Try to peel a leading day-token list off the segment. Forms we handle:
+    //   "Mon-Fri 9-5"
+    //   "Mon, Wed, Fri 10-2"
+    //   "Mon-Sun 8-8"
+    //   "Mon-Fri: 9 AM – 5 PM"
+    let daySet: Set<DayKey> | null = null;
+    let trailing = cleaned;
+
+    // Patterns like "Mon-Fri" / "Mon to Fri" / "Mon-Fri:".
+    const rangeMatch = cleaned.match(
+      /^([A-Za-z]{3,9}(?:\s*(?:-|–|—|to)\s*[A-Za-z]{3,9})?)(?:\s*[:,]\s*|\s+|$)(.*)$/i,
+    );
+    const listMatch = cleaned.match(
+      /^([A-Za-z]{3,9}(?:\s*,\s*[A-Za-z]{3,9})+)(?:\s*[:,]\s*|\s+|$)(.*)$/i,
+    );
+    if (rangeMatch && /-|–|—|to/i.test(rangeMatch[1])) {
+      daySet = expandDayToken(rangeMatch[1]);
+      if (daySet) trailing = rangeMatch[2];
+    } else if (listMatch) {
+      daySet = expandDayToken(listMatch[1]);
+      if (daySet) trailing = listMatch[2];
+    } else {
+      // Maybe the whole segment is just a single day token.
+      const singleAttempt = expandDayToken(cleaned.split(/\s+/)[0] ?? "");
+      if (singleAttempt && singleAttempt.size === 1) {
+        daySet = singleAttempt;
+        trailing = cleaned.replace(/^[A-Za-z]{3,9}\s*/i, "");
+      }
+    }
+
+    // Try to find a time range anywhere in the trailing fragment.
+    const range = parseTimeRange(trailing);
+    if (!range) continue;
+
+    // If we have a day list, apply. If not but the trailing segment is
+    // just a number-range like "9-5" with no day, apply to all 7 days
+    // (`daily` surmise) — common in spotty sheets like
+    // "8am-6pm daily". Otherwise, defer to the AI fallback.
+    if (daySet && daySet.size > 0) {
+      daySet.forEach((d) => working.set(d, range));
+      foundAnyTime = true;
+      continue;
+    }
+
+    // Bare time with no day info — apply to weekdays as a default
+    // (matches the behavior of the defaultHours() helper, so we don't
+    // silently drop information).
+    ["mon", "tue", "wed", "thu", "fri"].forEach((d) =>
+      working.set(d as DayKey, range)
+    );
+    foundAnyTime = true;
+  }
+
+  if (!foundAnyTime) return null;
+
+  // Fill in the days the regex couldn't determine with "—" so the
+  // schedule is complete and parseClock doesn't choke.
+  const closed = { open: "—", close: "—" };
+  const final: AtlasAsset["hours"] = {
+    mon: working.get("mon") ?? { ...closed },
+    tue: working.get("tue") ?? { ...closed },
+    wed: working.get("wed") ?? { ...closed },
+    thu: working.get("thu") ?? { ...closed },
+    fri: working.get("fri") ?? { ...closed },
+    sat: working.get("sat") ?? { ...closed },
+    sun: working.get("sun") ?? { ...closed },
+  };
+  return final;
+}
+
+/** True when `hours` matches the `defaultHours()` shape (10:00–17:00
+ *  Monday–Friday, closed weekends). Used at runtime to tell whether
+ *  `parseHoursFromDescription` succeeded at parse time (in which case
+ *  we DON'T need to ask the AI) or fell through to the default (in
+ *  which case the per-row loop should route to the OpenRouter
+ *  `extractHours` action for ambiguous descriptions). */
+export function isDefaultHours(hours: AtlasAsset["hours"]): boolean {
+  return (
+    hours.mon.open === "10:00" && hours.mon.close === "17:00" &&
+    hours.tue.open === "10:00" && hours.tue.close === "17:00" &&
+    hours.wed.open === "10:00" && hours.wed.close === "17:00" &&
+    hours.thu.open === "10:00" && hours.thu.close === "17:00" &&
+    hours.fri.open === "10:00" && hours.fri.close === "17:00" &&
+    hours.sat.open === "—" && hours.sat.close === "—" &&
+    hours.sun.open === "—" && hours.sun.close === "—"
+  );
+}
+
 function splitFeatures(s: string): string[] {
   return s
     .split(/[,;|]/)
@@ -1086,7 +1491,14 @@ export function importCsv(
       postalCode: normAddr.postalcode,
       lat: hasCoords ? latParsed : NaN,
       lng: hasCoords ? lngParsed : NaN,
-      hours: defaultHours(),
+      // Mine the description column for hours of operation at parse
+      // time. Falls back to a sensible weekday default when the
+      // description is empty / doesn't mention hours — the per-row
+      // loop in `ImportedDataProvider` will then route to the
+      // OpenRouter `extractHours` action if the description is
+      // ambiguous but non-empty.
+      hours: parseHoursFromDescription(get("description")) ||
+        defaultHours(),
       features,
       openedYear,
       signatureDrink: get("signatureDrink") || "—",

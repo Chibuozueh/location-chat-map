@@ -1015,3 +1015,202 @@ export const normalizeAddress = action({
     };
   },
 });
+
+// ---------------------------------------------------------------------------
+//  Hours-of-operation extraction — Tier-2 fallback used when the
+//  client-side `parseHoursFromDescription` regex misses (e.g. ambiguous
+//  descriptions that mention hours but don't match the strict day-ranges
+//  the regex recognizes).
+//
+//  Same provider as `normalizeAddress` (OpenRouter via Map_Router_Key)
+//  and the same strict-JSON contract. Returns a canonical weekly
+//  schedule where each day has `{open, close}` strings (24h "HH:MM")
+//  OR "—" for closed days.
+// ---------------------------------------------------------------------------
+
+const HOURS_EXTRACTOR_SYSTEM_PROMPT = `You are an hours-of-operation parser for a community-asset spreadsheet (Southwest Atlanta, USA). The client renders your JSON output directly inside the asset's "Open Now" toggle, so every value must be parseable as either "HH:MM" (24-hour) or the literal en-dash ("—") for closed days.
+
+# Goal
+Given the description below, return a full weekly schedule (seven days: monday through sunday) listing open and close times for each day. NEVER invent hours that weren't in the description. If the description is too vague ("By appointment", "TBD", "varies"), return "—" for every day.
+
+# Output format (strict JSON object, no markdown fences, no prose, no commentary)
+{
+  "mon":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "tue":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "wed":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "thu":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "fri":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "sat":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "sun":  {"open": "HH:MM" | "—", "close": "HH:MM" | "—"},
+  "confidence": "high" | "medium" | "low",
+  "notes": "<one short sentence when confidence is low, otherwise empty>"
+}
+
+# Rules
+1. **Time format**: "HH:MM" — 24-hour, two digits each. Examples: "09:00", "17:30", "00:00", "23:59". Convert from 12-hour ("9am" → "09:00", "5:30 PM" → "17:30"). Drop seconds.
+2. **Closed days**: use the literal en-dash character "—" for BOTH open and close when the asset doesn't operate that day. Do NOT use null, empty string, or "closed".
+3. **24/7**: emit "00:00" for open and "23:59" for close on every day.
+4. **Time ranges**:
+   - "Mon-Fri 9am-5pm" → mon/tue/wed/thu/fri = 09:00/17:00; sat/sun = "—/—"
+   - "M-F 8:30 AM – 5:30 PM" → 08:30/17:30 weekdays
+   - "Tue 11am-1pm; Thu 6pm-8pm" → tue = 11:00/13:00; thu = 18:00/20:00; others "—/—"
+   - "Mon, Wed, Fri 10-2" → mon/wed/fri = 10:00/14:00; others "—/—"
+   - "Weekdays 8am-8pm / Weekends 10am-6pm" → weekdays = 08:00/20:00, weekends = 10:00/18:00
+   - "Daily 8am-8pm" → all 7 days = 08:00/20:00
+   - "Open 9-5" with no day → weekdays only (default) = 09:00/17:00; weekends "—/—"
+5. **Cross-midnight** ("6pm-2am"): encode the close as the time of the NEXT morning — "6pm-2am" → "18:00"/"02:00".
+6. **Phrases that mean "not regularly scheduled"**: "By appointment", "Call for hours", "TBD", "varies", "TBA", "Not listed" → return "—" for ALL seven days. Set confidence to "low".
+7. **NEVER fabricate hours** outside what's in the description. If the description contains no time information at all, return "—" for every day with confidence "low".
+8. **Default closed days** to "—" rather than guess. Only set values for days the description explicitly OR implicitly mentions.
+9. **Preserve ambiguity**: missing / TBD → closed shape with confidence "low"; clear hours → confidence "high"; partial info → confidence "medium".
+
+# What you MUST NOT do
+- NEVER add markdown fences (no \`\`\`json).
+- NEVER return prose outside the JSON object.
+- NEVER omit a day — always emit all seven (mon, tue, wed, thu, fri, sat, sun).
+- NEVER use empty strings or null values. "—" or "HH:MM" only.
+- NEVER invent hours when the description is vague. Surface the ambiguity via confidence "low" + "—/—" everywhere.
+
+Return ONLY the JSON object.`;
+
+type ExtractHoursResult = {
+  ok: boolean;
+  hours?: Hours;
+  confidence?: "high" | "medium" | "low";
+  error?: string;
+  providerLabel?: string;
+};
+
+/** Local hours-shape alias. Mirrors `AtlasAsset["hours"]` from the
+ *  client-side `csv-import.ts` module so the chatComplete action can
+ *  validate AI-returned hours without depending on the entire client
+ *  archetype (which is built with the `@/` Vite alias not visible to
+ *  Convex's bundler). The struct is the canonical AtlasAsset["hours"]
+ *  shape, so the converged bytes round-trip without conversion. */
+type Hours = {
+  mon: { open: string; close: string };
+  tue: { open: string; close: string };
+  wed: { open: string; close: string };
+  thu: { open: string; close: string };
+  fri: { open: string; close: string };
+  sat: { open: string; close: string };
+  sun: { open: string; close: string };
+};
+
+/** Validate that the AI-returned object looks like a complete weekly
+ *  schedule with `mon..sun` keys and `{open, close}` strings. Strict
+ *  on shape so a chatty model can't slip Notes JSON or a single-day
+ *  fragment through. */
+function validateHoursObject(
+  obj: Record<string, unknown>,
+): Hours | null {
+  const days: Array<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"> = [
+    "mon",
+    "tue",
+    "wed",
+    "thu",
+    "fri",
+    "sat",
+    "sun",
+  ];
+  const out: Record<string, { open: string; close: string }> = {};
+  for (const d of days) {
+    const v = obj[d] as Record<string, unknown> | undefined;
+    if (!v || typeof v !== "object") return null;
+    const o = typeof v.open === "string" ? v.open.trim() : "";
+    const c = typeof v.close === "string" ? v.close.trim() : "";
+    if (o !== "—" && !/^\d{2}:\d{2}$/.test(o)) {
+      const coerced = coerceToHMM(o);
+      if (!coerced) return null;
+      out[d] = { open: coerced, close: coerceToHMM(c) ?? "—" };
+      continue;
+    }
+    if (c !== "—" && !/^\d{2}:\d{2}$/.test(c)) {
+      const coerced = coerceToHMM(c);
+      if (!coerced) return null;
+      out[d] = { open: o, close: coerced };
+      continue;
+    }
+    out[d] = { open: o, close: c };
+  }    return out as Hours;
+}
+
+/** Last-resort normalizer for AI-returned time strings — accepts
+ *  lower-case "09:00 am", "9:30pm", "9", etc., and emits "HH:MM" 24h or
+ *  null. Mirrors csv-import.parseTimeToken so the down-stream consumer
+ *  doesn't see inconsistent shapes. */
+function coerceToHMM(s: string): string | null {
+  if (!s || s === "—") return null;
+  const t = s.trim().replace(/\s+/g, " ");
+  const m = t.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const mm = m[2] ? parseInt(m[2], 10) : 0;
+  const suf = (m[3] ?? "").toLowerCase();
+  if (suf === "pm" && h < 12) h += 12;
+  if (suf === "am" && h === 12) h = 0;
+  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+export const extractHours = action({
+  args: {
+    description: v.string(),
+    assetName: v.optional(v.string()),
+    /** Tag used in offline messages so the user can tell from a
+     *  chat-panel error that the chat assistant itself is fine —
+     *  only this map-side hours-extraction key is missing. */
+  },
+  handler: async (_ctx, args): Promise<ExtractHoursResult> => {
+    const user = [
+      args.assetName ? `Asset name (hint): ${args.assetName}` : "",
+      `Description:\n${args.description}`,
+      "",
+      "Return ONLY the strict JSON object described in your system prompt — seven days with {open, close} values, plus a confidence field. No markdown, no commentary.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const res = await callAddressNormalizer({
+      system: HOURS_EXTRACTOR_SYSTEM_PROMPT,
+      user,
+      maxOutputTokens: 600,
+      temperature: 0,
+    });
+    if (res.error || !res.content) {
+      return {
+        ok: false,
+        error: res.error ?? "Map AI could not extract hours of operation.",
+        providerLabel: res.providerLabel,
+      };
+    }
+    const obj = extractJsonObject(res.content);
+    if (!obj) {
+      return {
+        ok: false,
+        error: "Map AI returned an unparseable hours object.",
+        providerLabel: res.providerLabel,
+      };
+    }
+    const hours = validateHoursObject(obj);
+    if (!hours) {
+      return {
+        ok: false,
+        error: "Map AI returned a malformed hours schedule.",
+        providerLabel: res.providerLabel,
+      };
+    }
+    const confidenceRaw = (
+      pickString(obj, "confidence") as "high" | "medium" | "low" | ""
+    ).toLowerCase();
+    return {
+      ok: true,
+      hours,
+      confidence:
+        confidenceRaw === "high" || confidenceRaw === "medium"
+          ? confidenceRaw
+          : "low",
+      providerLabel: res.providerLabel,
+    };
+  },
+});
