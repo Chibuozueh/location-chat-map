@@ -16,7 +16,7 @@ import {
   type AnyAsset,
 } from "@/state/imported-data";
 import type { LocationDoc } from "@/components/atlas/types";
-import type { AtlasAsset } from "@/lib/csv-import";
+import { ATLANTA_ZIP_CENTROIDS, type AtlasAsset } from "@/lib/csv-import";
 
 /**
  * Canonical category key. Maps spelling variants
@@ -212,11 +212,40 @@ function LandingInner() {
     [merged.chatOnly, matchesCategory],
   );
 
+  // ZIP-centroid augmentation. When a row in this category is sitting in
+  // `merged.chatOnly` (failed geocode OR PO Box OR no street at all)
+  // AND it carries a valid Atlanta ZIP, plot it on the map at the ZIP's
+  // centroid — styled with a different coordAccuracy so the user can see
+  // at a glance which pins are approximate vs exact. This is the fix
+  // for "31 in community classes only shows 2 on the map": without
+  // this fallback, every "Vine St. NW" / "various" / no-street row
+  // silently dropped off the map because Nominatim can't pin a precise
+  // house number. The ZIP centroid is at least the right neighborhood.
+  const augmentedMappable = useMemo(() => {
+    const zipped: AtlasAsset[] = [];
+    for (const a of merged.chatOnly) {
+      if (!matchesCategory(a)) continue;
+      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) continue;
+      const zip = (a.postalCode ?? "").trim();
+      const coord = ATLANTA_ZIP_CENTROIDS[zip];
+      if (!coord) continue;
+      zipped.push({
+        ...a,
+        lat: coord.lat,
+        lng: coord.lng,
+        coordAccuracy: "zip-centroid" as const,
+      });
+    }
+    return [...filteredMappable, ...zipped];
+  }, [filteredMappable, merged.chatOnly, matchesCategory]);
+
   // Group mappable assets by address so the map renders one pin per shared
   // address. Members of each cluster are preserved (used for the picker).
+  // Note: we feed `augmentedMappable` (precise + ZIP-centroid) so every
+  // asset with a valid Atlanta ZIP plots somewhere on the map.
   const clusters = useMemo(
-    () => clusterByAddress(filteredMappable as LocationDoc[]),
-    [filteredMappable],
+    () => clusterByAddress(augmentedMappable as LocationDoc[]),
+    [augmentedMappable],
   );
 
   // Wrappers that keep the picker and selection mutually exclusive.
@@ -397,10 +426,7 @@ function LandingInner() {
                   {selectedCategory && (
                     <CategoryBreakdown
                       total={filteredMappable.length + filteredChatOnly.length}
-                      plotted={filteredMappable.filter(
-                        (m) =>
-                          Number.isFinite(m.lat) && Number.isFinite(m.lng),
-                      ).length}
+                      plotted={augmentedMappable.length}
                       onViewList={() => setView("sheet")}
                     />
                   )}
