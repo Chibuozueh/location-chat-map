@@ -1,72 +1,21 @@
 <!doctype html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#FAF8F5" />
-  <title>Atlanta Atlas · Southwest ATL Asset Map</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet"
-  />
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/logo.svg" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#FAF8F5" />
+<title>Atlanta Atlas · Southwest ATL Asset Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap"
+rel="stylesheet"
+/>
 </head>
-
 <body>
-  <div id="root"></div>
-  <!-- Diagnostic: surface top-level module-evaluation and promise-rejection
-       errors so we can see the real cause instead of a blank page. Removed
-       once the root cause is fixed. -->
-  <script>
-    function showDiagnostic(html) {
-      const el = document.getElementById("root");
-      if (!el) return;
-      el.innerHTML = html;
-    }
-    function renderError(title, body) {
-      showDiagnostic(
-        '<div style="padding:24px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#b91c1c;background:#fff1f2;min-height:100vh;"><strong>' +
-        title + '</strong><br>' + body + '</div>'
-      );
-    }
-    window.onerror = function (msg, url, line, col, error) {
-      renderError(
-        "Top-level runtime error:",
-        String(msg) + "<br>at " + url + ":" + line + ":" + col + "<br><br>" +
-        (error && error.stack ? error.stack.replace(/</g, "&lt;") : "")
-      );
-    };
-    window.onunhandledrejection = function (event) {
-      var reason = event.reason;
-      var stack = reason && reason.stack ? reason.stack.replace(/</g, "&lt;") : "";
-      renderError(
-        "Unhandled promise rejection:",
-        String(reason).replace(/</g, "&lt;") + "<br><br>" + stack
-      );
-    };
-    // If after 8s React has still not mounted, surface that instead of
-    // leaving a blank page. We check BOTH the "data-react-mounted"
-    // attribute (set by src/main.tsx right after a successful render)
-    // AND child-node count, so a successful render is never replaced by
-    // the diagnostic.
-    setTimeout(function () {
-      const root = document.getElementById("root");
-      if (!root) return;
-      const mounted = root.getAttribute && root.getAttribute("data-react-mounted") === "1";
-      if (mounted || root.childNodes.length > 0) return;
-      renderError(
-        "App did not mount in time.",
-        "The JavaScript bundle loaded, but React never rendered into #root.\n" +
-        "This usually means a module-evaluation error occurred before React could start.\n" +
-        "Try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R)."
-      );
-    }, 8000);
-  </script>
-  <script type="module" src="/src/main.tsx"></script>
+<div id="root"></div>
+<script type="module" src="/src/main.tsx"></script>
 </body>
-
 </html>
