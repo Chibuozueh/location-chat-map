@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
@@ -13,29 +14,8 @@ import LandingRoute from "./pages/Landing.tsx";
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
-// ---- Detach volatile platform integrations from the synchronous module
-// graph so a 502 / timeout on the proxy cannot block React from ever
-// mounting. Two things previously hung or were silently swallowed here:
-//
-//   1. `import '@vly-ai/integrations'` — a side-effect-only dependency
-//      whose module evaluation could hang or 502. Module-load failures
-//      fire the `error` event on the <script> tag (and ONLY there),
-//      bypassing window.onerror / onunhandledrejection — which is why
-//      every diagnostic we added before looked blank.
-//
-//   2. `import { VlyToolbar } from "../vly-toolbar-readonly.tsx"` — this
-//      file pulls framer-motion, zumer/snapdom, and runtime svg/iframe
-//      generation. If the upstream daemon is wedged or the dev-server
-//      can't transform it, the topo-await around `<VlyToolbar />`
-//      leaves #root permenantly empty.
-//
-// Both are now loaded asynchronously, with a try/catch + Suspense fallback
-// wrapper so a stalled or refused fetch falls through to a working app.
-
-// Fire-and-forget side-effect import. We don't `await` it so it can never
-// block the rest of the entry script. If it errors, we log and continue.
-// The original `import '@vly-ai/integrations'` is removed entirely —
-// the platform integration is best-effort, not part of the render path.
+// Fire-and-forget side-effect import for the platform client. Loaded
+// asynchronously so it cannot block render.
 void import("@vly-ai/integrations").catch((err) => {
   console.warn(
     "[atlas] @vly-ai/integrations failed to load, continuing without it:",
@@ -43,31 +23,34 @@ void import("@vly-ai/integrations").catch((err) => {
   );
 });
 
-// Lazy wrapper around VlyToolbar. Catches module-load failures and
-// resolves to a no-op component so a hung or 502 toolbar cannot blank the
-// whole tree.
-const VlyToolbar = lazy(async () => {
-  try {
-    const mod = await import("../vly-toolbar-readonly.tsx");
-    return { default: (mod as { VlyToolbar: React.ComponentType })
-      .VlyToolbar ?? (() => null) };
-  } catch (err) {
-    console.warn("[atlas] VlyToolbar failed to load, hiding toolbar:", err);
-    return { default: () => null };
-  }
-});
-
-// Simple loading fallback for route transitions
+// Simple loading fallback — visible so unconditional suspensions anywhere
+// in the tree commit something usable to the DOM instead of leaving it
+// blank. With React 18 + createRoot, any child component throwing a
+// Promise (a Suspense throw) without a <Suspense> ancestor will silently
+// abort the entire commit, so we wrap the whole <AppRoot /> in a
+// top-level <Suspense> with this fallback as a guarantee.
 function RouteLoading() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-pulse text-muted-foreground">Loading...</div>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#FAF8F5",
+        color: "#7f1d1d",
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        fontSize: "14px",
+      }}
+    >
+      Loading Atlas…
     </div>
   );
 }
 
-/** Silent error boundary — if VlyToolbar crashes it renders nothing instead of
- *  crashing the whole app. */
+/** Silent error boundary — if VlyToolbar crashes it renders nothing. */
 class ToolbarErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean }
@@ -87,8 +70,7 @@ class ToolbarErrorBoundary extends React.Component<
 /** Hard guard so runtime errors never leave the preview as a blank page.
  *
  *  Defensive `getDerivedStateFromError(error: unknown)` so the boundary
- *  cannot itself crash on a non-Error throw. Uses SOLID inline colors for
- *  the error UI so it's always visible regardless of the theme loading. */
+ *  cannot itself crash on a non-Error throw and wipe the DOM. */
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; message: string; stack: string }
@@ -174,21 +156,20 @@ const convex = new ConvexReactClient(
 function AppRoot() {
   return (
     <RootErrorBoundary>
-      {/* VlyToolbar is wrapped in its own Suspense because it's lazy and
-          must never be allowed to suspend the rest of the render tree. */}
-      <Suspense fallback={null}>
-        <ToolbarErrorBoundary>
-          <VlyToolbar />
-        </ToolbarErrorBoundary>
-      </Suspense>
+      <ToolbarErrorBoundary>
+        <VlyToolbar />
+      </ToolbarErrorBoundary>
       <ConvexAuthProvider client={convex}>
         <BrowserRouter>
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<LandingRoute />} />
-              <Route path="/auth" element={<AuthPage redirectAfterAuth="/" />} /> {/* TODO: change redirect after auth to correct page */}
-              <Route path="*" element={<NotFound />} />
+              <Route path="/auth" element={<AuthPage redirectAfterAuth="/" />} />
+              <Route
+                path="*"
+                element={<NotFound />}
+              />
             </Routes>
           </Suspense>
         </BrowserRouter>
@@ -223,10 +204,9 @@ function RouteSyncer() {
 
 // NOTE: <StrictMode> is intentionally disabled in development because
 // react-leaflet@4.2.1's `MapContainer` does not clear the Leaflet
-// `_leaflet_id` from the DOM container on cleanup, which causes
-// "Map container is already initialized." when React double-invokes the
-// layout effect in StrictMode dev. We still wrap in StrictMode in
-// production to keep the dev-safety net for the rest of the app.
+// `_leaflet_id` from the DOM container on cleanup, which causes "Map
+// container is already initialized." when React double-invokes the
+// layout effect in StrictMode dev.
 const isProd = import.meta.env.PROD;
 
 const rootEl = document.getElementById("root");
@@ -236,20 +216,26 @@ if (!rootEl) {
 } else {
   try {
     createRoot(rootEl).render(
-      isProd ? (
-        <StrictMode>
+      // CRITICAL: top-level <Suspense> wraps the entire AppRoot so any
+      // descendant that throws a Promise (ConvexAuthProvider, a lazy
+      // module load, Convex useQuery, …) commits SOMETHING to the DOM
+      // — the visible RouteLoading fallback — instead of silently
+      // wiping the commit. This is THE previous regression: React 18
+      // createRoot + unhandled suspense = empty #root.
+      <Suspense fallback={<RouteLoading />}>
+        {isProd ? (
+          <StrictMode>
+            <AppRoot />
+          </StrictMode>
+        ) : (
           <AppRoot />
-        </StrictMode>
-      ) : (
-        <AppRoot />
-      ),
+        )}
+      </Suspense>,
     );
     // Tag the root so the index.html "did not mount" timer knows React
     // committed at least once and shouldn't show its diagnostic overlay.
     rootEl.setAttribute("data-react-mounted", "1");
   } catch (err) {
-    // createRoot or sync render threw — write directly to root so the
-    // user sees the actual exception instead of a blank page.
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack || "" : "";
     rootEl.innerHTML =
