@@ -230,11 +230,6 @@ export function LocationCard(props: {
                     raw
                   </span>
                 )}
-                {!aiOk && loc.cleanedConfidence === "low" && (
-                  <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
-                    low AI
-                  </span>
-                )}
               </a>
             );
           })()}
