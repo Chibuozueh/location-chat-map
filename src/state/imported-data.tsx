@@ -712,10 +712,16 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // was seeing. We always call now; rows without an address
         // still get passed `rawStreet=""` so the AI can use the
         // asset-name hint alone.
+        //
+        // Per the user's directive, every asset has an `address` and
+        // `zipcode` column populated — those two are the canonical
+        // inputs. City / state are intentionally left empty here so the
+        // AI and Nominatim focus on the authoritative fields rather
+        // than any noisy spreadsheet `City` / `State` columns.
         let addressForGeocode: AddressFragment = {
           street: doc.address ?? "",
-          city: doc.city ?? "",
-          state: doc.state ?? "",
+          city: "",
+          state: "",
           postalcode: doc.postalCode ?? "",
           country: doc.country || "USA",
         };
@@ -747,8 +753,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             try {
               const clean = await normalizeAddress({
                 rawStreet,
-                rawCity: doc.city,
-                rawState: doc.state,
                 rawPostalCode: doc.postalCode,
                 assetName: doc.name,
                 knownCity: "Atlanta",
