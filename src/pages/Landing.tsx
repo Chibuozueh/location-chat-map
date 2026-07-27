@@ -81,6 +81,22 @@ function LandingInner() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const exploreRef = useRef<HTMLDivElement | null>(null);
 
+  // When the user picks a category, scroll them to the map area so the
+  // new "<CategoryBreakdown>" banner + map pins + address-only list are
+  // visible. Without this scroll, clicking a tab while scrolled up the
+  // page would silently swap the filter and leave the user looking at
+  // the hero, with no visible feedback that the selection took effect.
+  useEffect(() => {
+    if (!selectedCategory) return;
+    const id = requestAnimationFrame(() => {
+      exploreRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [selectedCategory]);
+
   // Helper: check whether an asset is currently open based on its hours.
   function isAssetOpenNow(asset: AnyAsset, now = new Date()): boolean {
     const dayKey = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][now.getDay()] as
@@ -371,6 +387,23 @@ function LandingInner() {
             <div className="relative flex-1">
               {view === "map" ? (
                 <>
+                  {/* Count breakdown banner — sits ABOVE the map so the
+                      user sees the discrepancy between tab count (e.g.
+                      "31") and actual plotted pins (e.g. 2) immediately,
+                      without scrolling past the map. The "View all as
+                      list" CTA flips the same view-state to "sheet"
+                      so every row in this category is reachable in one
+                      click. */}
+                  {selectedCategory && (
+                    <CategoryBreakdown
+                      total={filteredMappable.length + filteredChatOnly.length}
+                      plotted={filteredMappable.filter(
+                        (m) =>
+                          Number.isFinite(m.lat) && Number.isFinite(m.lng),
+                      ).length}
+                      onViewList={() => setView("sheet")}
+                    />
+                  )}
                   <MapView
                     clusters={displayClusters}
                     selectedSlug={selected}
@@ -379,15 +412,9 @@ function LandingInner() {
                     onOpenPicker={handleOpenPicker}
                     onClosePicker={handleClosePicker}
                   />
-                  {/* Address-only list. When a category filter is active,
-                      the map (above) plots every row that geocoded.
-                      Anything left over — a row with `lat=NaN` or in
-                      `state.chatOnly` / `state.failed` / `state.pending`
-                      — is listed here so the visible "31" count matches
-                      what's actually accessible in the UI, and the user
-                      can click a row to focus it for the chat / description
-                      popup. Skipped in the Sheet view because the grid
-                      already lists these. */}
+                  {/* Address-only list. Sits below the map for users who
+                      scroll. Every row in the filter that didn't geocode
+                      lands here, sorted by name. */}
                   {selectedCategory && (
                     <AddressOnlyList
                       mappable={filteredMappable}
@@ -527,6 +554,47 @@ function AddressOnlyList({
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Count breakdown that sits above the map when a category filter is
+ * active. Surfaces the discrepancy between the tab count (e.g. 31)
+ * and the actual plotted pins (e.g. 2) so the user sees at a glance
+ * how many addresses fell through to address-only. The "View all as
+ * list" CTA flips the same view-state to "sheet" without losing the
+ * active category, so the user doesn't have to remember which tab
+ * they clicked.
+ */
+function CategoryBreakdown({
+  total,
+  plotted,
+  onViewList,
+}: {
+  total: number;
+  plotted: number;
+  onViewList: () => void;
+}) {
+  const unmapped = Math.max(total - plotted, 0);
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/40 bg-accent/5 px-3 py-2 text-[11.5px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+        <span className="font-medium text-foreground">
+          {total} in this category
+        </span>
+        <span className="text-muted-foreground">
+          · {plotted} plotted on the map · {unmapped} address-only
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onViewList}
+        className="rounded-full border border-accent/50 bg-accent/10 px-3 py-1 text-[11px] font-medium text-accent transition hover:bg-accent/20"
+      >
+        View all as list →
+      </button>
     </div>
   );
 }
