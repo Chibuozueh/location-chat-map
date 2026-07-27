@@ -758,9 +758,7 @@ export function ChatPanel(props: { onCitation: (slug: string) => void }) {
                       {importedState.rejected > 0 && <span>{importedState.rejected} skipped</span>}
                       {importedState.progress.cached > 0 && <span>{importedState.progress.cached} cached</span>}
                       {importedState.progress.exact > 0 && <span>{importedState.progress.exact} exact</span>}
-                      {importedState.progress.relaxed > 0 && <span>{importedState.progress.relaxed} relaxed</span>}
-                      {importedState.progress.zipCentroid > 0 && <span>{importedState.progress.zipCentroid} zip-centroid</span>}
-                      {importedState.progress.cerebrasCleaned > 0 && (
+                      {importedState.progress.relaxed > 0 && <span>{importedState.progress.relaxed} relaxed</span>}                      {importedState.progress.cerebrasCleaned > 0 && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-[#6e0e1e0d] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6e0e1e]">
                           {importedState.progress.cerebrasCleaned} cerebras-cleaned
                         </span>

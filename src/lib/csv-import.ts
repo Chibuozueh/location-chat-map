@@ -86,16 +86,16 @@ export type AddressFragment = {
 
 /**
  * Coarse accuracy bucket — surfaced to the client so the UI can
- * distinguish rows that came from a structured address match vs a zip
- * centroid vs a multi-tier fallback. `cerebras-fixup` indicates the
- * address was first parsed/cleaned by the Cerebras AI normalizer
- * (the map side never uses Gemini — that's reserved for the chat
- * assistant), then re-geocoded through the same cascade.
+ * distinguish rows that came from a structured address match vs a
+ * relaxed fuzzy Nominatim match vs a row whose address was first
+ * standardized by the Atlas Map AI then re-geocoded through the
+ * cascade. The map never uses ZIP-centroid plotting any more — rows
+ * that lack a real street address resolve through the AI or stay
+ * unmapped.
  */
 export type CoordAccuracy =
   | "exact"
   | "relaxed"
-  | "zip-centroid"
   | "cerebras-fixup";
 
 export type ImportedRow = {
@@ -1276,97 +1276,6 @@ function makeAddressFragment(get: (f: string) => string): AddressFragment {
     country: explicitCountry || "USA",
   };
 }
-
-// Static Atlanta ZIP centroids — short-circuits the geocode cascade for
-// SW Atlanta HUD addresses, no network roundtrip required.
-export const ATLANTA_ZIP_CENTROIDS: Record<string, { lat: number; lng: number }> = {
-  // Atlanta-metro ZCTA centroids. Hand-curated from public ZCTA data so the
-  // geocoder can short-circuit to a known good coordinate for any HUD row
-  // that ships only a ZIP with an Atlanta-metro postal code. The exact
-  // spot within the zip still requires Nominatim for street-level accuracy;
-  // these coords let the marker land in the right neighborhood without a
-  // network roundtrip on Tier 4a.
-  "30002": { lat: 33.7723, lng: -84.3877 },
-  "30030": { lat: 33.7715, lng: -84.2988 },
-  "30032": { lat: 33.7361, lng: -84.2890 },
-  "30034": { lat: 33.6891, lng: -84.3299 },
-  "30060": { lat: 33.9522, lng: -84.5444 },
-  "30080": { lat: 33.8767, lng: -84.5047 },
-  "30126": { lat: 33.8486, lng: -84.5547 },
-  "30213": { lat: 33.6441, lng: -84.4486 },
-  "30236": { lat: 33.6755, lng: -84.3967 },
-  "30238": { lat: 33.4949, lng: -84.3874 },
-  "30260": { lat: 33.5841, lng: -84.4733 },
-  "30265": { lat: 33.3901, lng: -84.7033 },
-  "30268": { lat: 33.5340, lng: -84.7324 },
-  "30269": { lat: 33.3981, lng: -84.5723 },
-  "30273": { lat: 33.6280, lng: -84.4690 },
-  "30274": { lat: 33.5882, lng: -84.4734 },
-  "30276": { lat: 33.2785, lng: -84.6137 },
-  "30281": { lat: 33.5497, lng: -84.2071 },
-  "30288": { lat: 33.5905, lng: -84.3590 },
-  "30290": { lat: 33.4649, lng: -84.5875 },
-  "30291": { lat: 33.6808, lng: -84.4825 },
-  "30292": { lat: 33.4821, lng: -84.5461 },
-  "30294": { lat: 33.6495, lng: -84.3980 },
-  "30296": { lat: 33.5659, lng: -84.4479 },
-  "30297": { lat: 33.5841, lng: -84.4681 },
-  "30303": { lat: 33.7537, lng: -84.3863 },
-  "30305": { lat: 33.8310, lng: -84.3830 },
-  "30306": { lat: 33.7868, lng: -84.3590 },
-  "30307": { lat: 33.7691, lng: -84.3380 },
-  "30308": { lat: 33.7710, lng: -84.3777 },
-  "30309": { lat: 33.7972, lng: -84.3877 },
-  "30310": { lat: 33.7329, lng: -84.4088 },
-  "30311": { lat: 33.7326, lng: -84.4828 },
-  "30312": { lat: 33.7465, lng: -84.3759 },
-  "30313": { lat: 33.7685, lng: -84.3950 },
-  "30314": { lat: 33.7563, lng: -84.4253 },
-  "30315": { lat: 33.7051, lng: -84.3826 },
-  "30316": { lat: 33.7179, lng: -84.3339 },
-  "30317": { lat: 33.7495, lng: -84.3122 },
-  "30318": { lat: 33.7916, lng: -84.4472 },
-  "30319": { lat: 33.8441, lng: -84.3358 },
-  "30324": { lat: 33.8205, lng: -84.3585 },
-  "30326": { lat: 33.8440, lng: -84.3611 },
-  "30327": { lat: 33.8726, lng: -84.4228 },
-  "30328": { lat: 33.9245, lng: -84.3786 },
-  "30329": { lat: 33.8360, lng: -84.3214 },
-  "30330": { lat: 33.7067, lng: -84.4343 },
-  "30331": { lat: 33.6968, lng: -84.5326 },
-  "30332": { lat: 33.7763, lng: -84.4014 },
-  "30334": { lat: 33.7487, lng: -84.3878 },
-  "30336": { lat: 33.7311, lng: -84.6533 },
-  "30337": { lat: 33.6437, lng: -84.4611 },
-  "30338": { lat: 33.9529, lng: -84.3176 },
-  "30339": { lat: 33.9078, lng: -84.4225 },
-  "30340": { lat: 33.8994, lng: -84.2864 },
-  "30341": { lat: 33.9048, lng: -84.2992 },
-  "30342": { lat: 33.8810, lng: -84.3751 },
-  "30344": { lat: 33.6761, lng: -84.4577 },
-  "30345": { lat: 33.8521, lng: -84.2849 },
-  "30346": { lat: 33.9135, lng: -84.3406 },
-  "30349": { lat: 33.6223, lng: -84.4942 },
-  "30350": { lat: 33.9874, lng: -84.3366 },
-  "30354": { lat: 33.6654, lng: -84.3788 },
-  "30360": { lat: 33.9272, lng: -84.2808 },
-  "30363": { lat: 33.7900, lng: -84.3990 },
-  "31106": { lat: 33.7920, lng: -84.3306 },
-  "31107": { lat: 33.7720, lng: -84.3622 },
-  "31119": { lat: 33.7447, lng: -84.3944 },
-  "31126": { lat: 33.7941, lng: -84.3638 },
-  "31131": { lat: 33.7537, lng: -84.3863 },
-  "31136": { lat: 33.7910, lng: -84.4089 },
-  "31139": { lat: 33.8573, lng: -84.4527 },
-  "31141": { lat: 33.8762, lng: -84.2893 },
-  "31144": { lat: 34.0067, lng: -84.2968 },
-  "31145": { lat: 33.8521, lng: -84.3378 },
-  "31146": { lat: 33.9240, lng: -84.3370 },
-  "31150": { lat: 33.9854, lng: -84.3396 },
-  "31156": { lat: 33.8704, lng: -84.3122 },
-  "31192": { lat: 33.7698, lng: -84.3546 },
-  "31193": { lat: 33.7819, lng: -84.3886 },
-};
 
 export function importCsv(
   text: string,

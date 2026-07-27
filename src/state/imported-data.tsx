@@ -34,8 +34,6 @@ export type GeocodeProgress = {
   exact: number;
   /** Tier 3 relaxed match (street+zip only). */
   relaxed: number;
-  /** Zip centroid (Atlanta table or Zippopotam.us fallback). */
-  zipCentroid: number;
   /** Rows that the Cerebras AI cleanup successfully returned and the
    *  cascade then accepted. */
   cerebrasCleaned: number;
@@ -124,7 +122,6 @@ const EMPTY_PROGRESS: GeocodeProgress = {
   cached: 0,
   exact: 0,
   relaxed: 0,
-  zipCentroid: 0,
   cerebrasCleaned: 0,
   cerebrasSkipped: 0,
   cerebrasError: 0,
@@ -496,7 +493,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           cached: 0,
           exact: 0,
           relaxed: 0,
-          zipCentroid: 0,
           cerebrasCleaned: 0,
           cerebrasSkipped: 0,
           cerebrasError: 0,
@@ -956,11 +952,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
               relaxed:
                 prev.progress.relaxed +
                 (source === "fetched" && accuracy === "relaxed" ? 1 : 0),
-              zipCentroid:
-                prev.progress.zipCentroid +
-                (source === "fetched" && accuracy === "zip-centroid"
-                  ? 1
-                  : 0),
               cerebrasCleaned:
                 prev.progress.cerebrasCleaned +
                 (llmOutcome === "cleaned" ? 1 : 0),

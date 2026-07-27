@@ -17,7 +17,7 @@ import {
   type AnyAsset,
 } from "@/state/imported-data";
 import type { LocationDoc } from "@/components/atlas/types";
-import { ATLANTA_ZIP_CENTROIDS, type AtlasAsset } from "@/lib/csv-import";
+import { type AtlasAsset } from "@/lib/csv-import";
 
 /**
  * Canonical category key. Maps spelling variants
@@ -224,42 +224,21 @@ function LandingInner() {
   );
 
   /**
-   * Dynamic ZIP centroids — declared early (before `unmappedAssets`
-   * below) so the unmapped-count memo can reference it without a
-   * TypeScript "used before declaration" error. The actual
-   * Zippopotam.us-fed lookup logic lives in the section further
-   * down in this file; this binding just establishes the shape.
-   */
-  const [dynamicZipCentroids, setDynamicZipCentroids] = useState<
-    Record<string, { lat: number; lng: number }>
-  >({});
-
-  /**
-   * Unmapped assets — rows in `merged.chatOnly` that can't be plotted
-   * even after the ZIP-rescue rescue (static `ATLANTA_ZIP_CENTROIDS`
-   * table + dynamic Zippopotam.us). Drives the live count on the
-   * dashed-border "Unmapped" pill in `<CategoryFilter>` and the
-   * sheet-view list when the user clicks that pill.
-   *
-   * Definition: NaN lat/lng (not in `merged.mappable`) AND the row
-   * doesn't have a valid 5-digit US ZIP that either table covers.
-   * Anything that ZIP-rescue can plot is excluded — those assets will
-   * end up on the map via `augmentedMappable`.
+   * Unmapped assets — rows in `merged.chatOnly` whose coords are
+   * NaN. With ZIP-centroid plotting removed (the user's choice:
+   * "map direct addresses, don't use zipcode centroids"), these rows
+   * stay out of `merged.mappable` and instead show up in the dashed
+   * "Unmapped" pill in `<CategoryFilter>` and the sheet-view list
+   * when that pill is selected. The Atlas Map AI is the only bulk
+   * rescue path; if it fails, the asset is honestly shown as
+   * unmapped rather than plotted at neighborhood precision.
    */
   const unmappedAssets = useMemo(
     () =>
-      merged.chatOnly.filter((a) => {
-        if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) return false;
-        const zip = (a.postalCode ?? "").trim();
-        if (
-          /^\d{5}$/.test(zip) &&
-          (ATLANTA_ZIP_CENTROIDS[zip] || dynamicZipCentroids[zip])
-        ) {
-          return false;
-        }
-        return true;
-      }),
-    [merged.chatOnly, dynamicZipCentroids],
+      merged.chatOnly.filter(
+        (a) => !Number.isFinite(a.lat) || !Number.isFinite(a.lng),
+      ),
+    [merged.chatOnly],
   );
 
   /** True when the user picked the "Unmapped" pill in the category
@@ -276,114 +255,22 @@ function LandingInner() {
     }
   }, [isUnmappedTab, view]);
 
-  // Dynamic ZIP centroids — populated live from Zippopotam.us for any
-  // 5-digit US ZIP the hardcoded `ATLANTA_ZIP_CENTROIDS` table doesn't
-  // already cover. This lets us rescue rows whose ZIP is valid but
-  // outside the Atlanta core (e.g. College Park, Hapeville, Forest
-  // Park, etc.) so they still plot at neighborhood accuracy instead of
-  // silently dropping off the map.
-  // (State declaration moved up above `unmappedAssets`; see that
-  // block for the binding.)
-
-  // Unique 5-digit ZIPs in the chatOnly bucket that are NOT in the
-  // static table and not yet in `dynamicZipCentroids`. Drained one
-  // at a time by the useEffect below so we honor Zippopotam.us's
-  // ≤ 1 RPS public-service rate limit.
-  const unmappedZips = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const a of merged.chatOnly) {
-      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) continue;
-      const zip = (a.postalCode ?? "").trim();
-      if (!/^\d{5}$/.test(zip)) continue;
-      if (ATLANTA_ZIP_CENTROIDS[zip]) continue;
-      if (dynamicZipCentroids[zip]) continue;
-      if (seen.has(zip)) continue;
-      seen.add(zip);
-      out.push(zip);
-    }
-    return out;
-  }, [merged.chatOnly, dynamicZipCentroids]);
-
-  // Walk the unmapped ZIP list and resolve each from Zippopotam.us
-  // one at a time with a 1.1 s gap. Each hit lands in
-  // `dynamicZipCentroids`; the augmentedMappable memo below picks
-  // them up on the next render and the map plots incrementally.
-  // Cancelled cleanly on unmount or any state rotation that would
-  // otherwise let a stale ZIP write to the new state.
-  useEffect(() => {
-    if (unmappedZips.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      for (const zip of unmappedZips) {
-        if (cancelled) return;
-        if (dynamicZipCentroids[zip]) continue;
-        try {
-          const resp = await fetch(
-            `https://api.zippopotam.us/us/${encodeURIComponent(zip)}`,
-            { headers: { Accept: "application/json" } },
-          );
-          if (cancelled) return;
-          if (!resp.ok) {
-            await new Promise((r) => setTimeout(r, 1100));
-            continue;
-          }
-          const data = (await resp.json()) as {
-            places?: Array<{ latitude: string; longitude: string }>;
-          };
-          const place = data?.places?.[0];
-          if (!place) {
-            await new Promise((r) => setTimeout(r, 1100));
-            continue;
-          }
-          const lat = parseFloat(place.latitude);
-          const lng = parseFloat(place.longitude);
-          if (Number.isFinite(lat) && Number.isFinite(lng) && !cancelled) {
-            setDynamicZipCentroids((prev) => ({
-              ...prev,
-              [zip]: { lat, lng },
-            }));
-          }
-          await new Promise((r) => setTimeout(r, 1100));
-        } catch {
-          await new Promise((r) => setTimeout(r, 1100));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [unmappedZips, dynamicZipCentroids]);
-
-  // ZIP-centroid augmentation. When a row in this category is sitting in
-  // `merged.chatOnly` (failed geocode OR PO Box OR no street at all)
-  // AND it carries a valid 5-digit US ZIP, plot it on the map at the
-  // ZIP's centroid — styled with a different coordAccuracy so the user
-  // can see at a glance which pins are approximate vs exact. The static
-  // `ATLANTA_ZIP_CENTROIDS` table resolves Atlanta-core ZIPs instantly;
-  // `dynamicZipCentroids` (populated by the useEffect above) extends
-  // coverage to any US ZIP the user might have in their sheet.
-  const augmentedMappable = useMemo(() => {
-    const zipped: AtlasAsset[] = [];
-    for (const a of merged.chatOnly) {
-      if (!matchesCategory(a)) continue;
-      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) continue;
-      const zip = (a.postalCode ?? "").trim();
-      // Static table wins when present (Atlanta-core ZIPs render
-      // instantly); the dynamic Zippopotam.us cache fills the gap
-      // for any other valid 5-digit US ZIP.
-      const coord =
-        ATLANTA_ZIP_CENTROIDS[zip] ?? dynamicZipCentroids[zip];
-      if (!coord) continue;
-      zipped.push({
-        ...a,
-        lat: coord.lat,
-        lng: coord.lng,
-        coordAccuracy: "zip-centroid" as const,
-      });
-    }
-    return [...filteredMappable, ...zipped];
-  }, [filteredMappable, merged.chatOnly, matchesCategory, dynamicZipCentroids]);
+  // Mappable rows — precise-coord `filteredMappable` union with
+  // category-matching `filteredChatOnly` rows. ZIP-centroid plotting
+  // is intentionally removed: only rows the geocode cascade + Atlas
+  // Map AI resolved to a real street address plot on the map. The
+  // remaining chatOnly rows surface in the "Unmapped" sheet-tab pill
+  // so the user can audit exactly which addresses the Map AI could
+  // not standardize.
+  const augmentedMappable = useMemo(
+    () => [
+      ...filteredMappable,
+      ...filteredChatOnly.filter(
+        (a) => Number.isFinite(a.lat) && Number.isFinite(a.lng),
+      ),
+    ],
+    [filteredMappable, filteredChatOnly],
+  );
 
   // Group mappable assets by address so the map renders one pin per shared
   // address. Members of each cluster are preserved (used for the picker).
