@@ -212,22 +212,105 @@ function LandingInner() {
     [merged.chatOnly, matchesCategory],
   );
 
+  // Dynamic ZIP centroids — populated live from Zippopotam.us for any
+  // 5-digit US ZIP the hardcoded `ATLANTA_ZIP_CENTROIDS` table doesn't
+  // already cover. This lets us rescue rows whose ZIP is valid but
+  // outside the Atlanta core (e.g. College Park, Hapeville, Forest
+  // Park, etc.) so they still plot at neighborhood accuracy instead of
+  // silently dropping off the map.
+  const [dynamicZipCentroids, setDynamicZipCentroids] = useState<
+    Record<string, { lat: number; lng: number }>
+  >({});
+
+  // Unique 5-digit ZIPs in the chatOnly bucket that are NOT in the
+  // static table and not yet in `dynamicZipCentroids`. Drained one
+  // at a time by the useEffect below so we honor Zippopotam.us's
+  // ≤ 1 RPS public-service rate limit.
+  const unmappedZips = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const a of merged.chatOnly) {
+      if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) continue;
+      const zip = (a.postalCode ?? "").trim();
+      if (!/^\d{5}$/.test(zip)) continue;
+      if (ATLANTA_ZIP_CENTROIDS[zip]) continue;
+      if (dynamicZipCentroids[zip]) continue;
+      if (seen.has(zip)) continue;
+      seen.add(zip);
+      out.push(zip);
+    }
+    return out;
+  }, [merged.chatOnly, dynamicZipCentroids]);
+
+  // Walk the unmapped ZIP list and resolve each from Zippopotam.us
+  // one at a time with a 1.1 s gap. Each hit lands in
+  // `dynamicZipCentroids`; the augmentedMappable memo below picks
+  // them up on the next render and the map plots incrementally.
+  // Cancelled cleanly on unmount or any state rotation that would
+  // otherwise let a stale ZIP write to the new state.
+  useEffect(() => {
+    if (unmappedZips.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const zip of unmappedZips) {
+        if (cancelled) return;
+        if (dynamicZipCentroids[zip]) continue;
+        try {
+          const resp = await fetch(
+            `https://api.zippopotam.us/us/${encodeURIComponent(zip)}`,
+            { headers: { Accept: "application/json" } },
+          );
+          if (cancelled) return;
+          if (!resp.ok) {
+            await new Promise((r) => setTimeout(r, 1100));
+            continue;
+          }
+          const data = (await resp.json()) as {
+            places?: Array<{ latitude: string; longitude: string }>;
+          };
+          const place = data?.places?.[0];
+          if (!place) {
+            await new Promise((r) => setTimeout(r, 1100));
+            continue;
+          }
+          const lat = parseFloat(place.latitude);
+          const lng = parseFloat(place.longitude);
+          if (Number.isFinite(lat) && Number.isFinite(lng) && !cancelled) {
+            setDynamicZipCentroids((prev) => ({
+              ...prev,
+              [zip]: { lat, lng },
+            }));
+          }
+          await new Promise((r) => setTimeout(r, 1100));
+        } catch {
+          await new Promise((r) => setTimeout(r, 1100));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [unmappedZips, dynamicZipCentroids]);
+
   // ZIP-centroid augmentation. When a row in this category is sitting in
   // `merged.chatOnly` (failed geocode OR PO Box OR no street at all)
-  // AND it carries a valid Atlanta ZIP, plot it on the map at the ZIP's
-  // centroid — styled with a different coordAccuracy so the user can see
-  // at a glance which pins are approximate vs exact. This is the fix
-  // for "31 in community classes only shows 2 on the map": without
-  // this fallback, every "Vine St. NW" / "various" / no-street row
-  // silently dropped off the map because Nominatim can't pin a precise
-  // house number. The ZIP centroid is at least the right neighborhood.
+  // AND it carries a valid 5-digit US ZIP, plot it on the map at the
+  // ZIP's centroid — styled with a different coordAccuracy so the user
+  // can see at a glance which pins are approximate vs exact. The static
+  // `ATLANTA_ZIP_CENTROIDS` table resolves Atlanta-core ZIPs instantly;
+  // `dynamicZipCentroids` (populated by the useEffect above) extends
+  // coverage to any US ZIP the user might have in their sheet.
   const augmentedMappable = useMemo(() => {
     const zipped: AtlasAsset[] = [];
     for (const a of merged.chatOnly) {
       if (!matchesCategory(a)) continue;
       if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) continue;
       const zip = (a.postalCode ?? "").trim();
-      const coord = ATLANTA_ZIP_CENTROIDS[zip];
+      // Static table wins when present (Atlanta-core ZIPs render
+      // instantly); the dynamic Zippopotam.us cache fills the gap
+      // for any other valid 5-digit US ZIP.
+      const coord =
+        ATLANTA_ZIP_CENTROIDS[zip] ?? dynamicZipCentroids[zip];
       if (!coord) continue;
       zipped.push({
         ...a,
@@ -237,7 +320,7 @@ function LandingInner() {
       });
     }
     return [...filteredMappable, ...zipped];
-  }, [filteredMappable, merged.chatOnly, matchesCategory]);
+  }, [filteredMappable, merged.chatOnly, matchesCategory, dynamicZipCentroids]);
 
   // Group mappable assets by address so the map renders one pin per shared
   // address. Members of each cluster are preserved (used for the picker).

@@ -697,7 +697,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
             // visible companion to this log; the console line is the
             // forensic check.
             console.info(
-              `[atlas/llm-normalize] calling Cerebras for "${doc.name}" (#${
+              `[atlas/llm-normalize] calling Atlas Map AI for "${doc.name}" (#${
                 i + 1
               }/${state.pending.length}); raw street = "${rawStreet}", zip = "${
                 doc.postalCode ?? ""
@@ -715,7 +715,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 knownCountry: "USA",
               });
               console.info(
-                `[atlas/llm-normalize] Cerebras returned for "${doc.name}":`,
+                `[atlas/llm-normalize] Atlas Map AI returned for "${doc.name}":`,
                 {
                   ok: !!clean.ok,
                   provider: clean.providerLabel ?? null,
@@ -744,19 +744,23 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                   clean.error,
                 )
               ) {
+                // TRANSIENT FAILURE (rate-limit, network, 5xx, auth-
+                // rejected). Don't poison the in-memory cache with this —
+                // a Retry click should re-query the AI rather than
+                // re-using the cached "skip" verdict and burning the row.
                 llmOutcome = "errored";
-                normalizeCacheRef.current.set(cleanCacheKey, {
-                  ok: false,
-                });
-                // Surface the Cerebras key state in the chip so the user
-                // can tell at a glance whether the dedicated map key is
-                // configured but rate-limited, or simply not set. Gemini
-                // is no longer in the map chain, so the only "offline"
-                // label we emit here is the Cerebras one.
-                if (/Cerebras.*offline|CEREBRAS_API_KEY/i.test(clean.error)) {
-                  lastProviderLabel = "Cerebras · offline";
+                if (
+                  /map ai.*offline|was rejected by|map_router_key|openrouter_api_key/i.test(
+                    clean.error,
+                  )
+                ) {
+                  lastProviderLabel = "Map AI · offline";
                 }
               } else {
+                // PERMANENT REFUSAL. The model returned ok=false with no
+                // error message (e.g. "Couldn't recover a street line").
+                // Cache the refusal so a Retry doesn't re-bill the model
+                // for the same row in the same import.
                 llmOutcome = "skipped";
                 normalizeCacheRef.current.set(cleanCacheKey, {
                   ok: false,
