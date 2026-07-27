@@ -18,6 +18,28 @@ import {
 import type { LocationDoc } from "@/components/atlas/types";
 import type { AtlasAsset } from "@/lib/csv-import";
 
+/**
+ * Canonical category key. Maps spelling variants
+ * ("Comm Based Classes & Programming", "Community Classes & Programming",
+ * "community-classes-&-programming") onto a single shared bucket so they
+ * render under one tab and the tab click filters them all together.
+ * Without this, every minor casing / punctuation variant in the upstream
+ * spreadsheet spawns a redundant tab and its rows silently disappear
+ * from the user's view.
+ */
+function canonCategory(s: string | null | undefined): string {
+  if (!s) return "";
+  return s
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[,._-]+/g, " ")
+    .replace(/\bcomm(unity|unal|unity-?based)?\b/g, "community")
+    .replace(/\bbased\b/g, "")
+    .replace(/\bclasses\s+and\s+programs?\b/g, "classes & programming")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function LandingInner() {
   // The atlas's only data source is the live Google Sheet (auto-fetched
   // below). We no longer pull SEED_LOCATIONS from Convex — the imported
@@ -125,20 +147,38 @@ function LandingInner() {
     () => [...merged.mappable, ...merged.chatOnly],
     [merged.mappable, merged.chatOnly],
   );
-  const categories = useMemo(() => {
-    const set = new Set<string>();
+
+  // Categories collapse by canonical key so spelling variants share a tab.
+  // The representative stored in `categories` is the canonical key
+  // itself; `prettifyCategoryLabel` in CategoryFilter typeset will turn
+  // it into a readable label, and `selectedCategory === canon` is the
+  // wire-shape matchesCategory compares against below.
+  const categoryGroups = useMemo(() => {
+    const map = new Map<string, { representative: string; count: number }>();
     for (const a of allAssets) {
-      const c = a.category?.trim().toLowerCase();
-      if (c) set.add(c);
+      const canon = canonCategory(a.category);
+      if (!canon) continue;
+      const existing = map.get(canon);
+      if (existing) existing.count++;
+      else map.set(canon, { representative: canon, count: 1 });
     }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    return Array.from(map.entries()).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
   }, [allAssets]);
+
+  const categories = useMemo(
+    () => categoryGroups.map(([, info]) => info.representative),
+    [categoryGroups],
+  );
 
   // Filter helpers. Category and open-now can be composed.
   const matchesCategory = useCallback(
     (asset: AnyAsset) => {
       if (!selectedCategory) return true;
-      return asset.category?.trim().toLowerCase() === selectedCategory;
+      return (
+        canonCategory(asset.category) === canonCategory(selectedCategory)
+      );
     },
     [selectedCategory],
   );
@@ -254,7 +294,7 @@ function LandingInner() {
             onSelect={setSelectedCategory}
             counts={categories.reduce((acc, c) => {
               acc[c] = allAssets.filter(
-                (a) => a.category?.trim().toLowerCase() === c,
+                (a) => canonCategory(a.category) === c,
               ).length;
               return acc;
             }, {} as Record<string, number>)}
@@ -330,14 +370,32 @@ function LandingInner() {
 
             <div className="relative flex-1">
               {view === "map" ? (
-                <MapView
-                  clusters={displayClusters}
-                  selectedSlug={selected}
-                  pickerClusterKey={pickerClusterKey}
-                  onSelect={handleSelectSlug}
-                  onOpenPicker={handleOpenPicker}
-                  onClosePicker={handleClosePicker}
-                />
+                <>
+                  <MapView
+                    clusters={displayClusters}
+                    selectedSlug={selected}
+                    pickerClusterKey={pickerClusterKey}
+                    onSelect={handleSelectSlug}
+                    onOpenPicker={handleOpenPicker}
+                    onClosePicker={handleClosePicker}
+                  />
+                  {/* Address-only list. When a category filter is active,
+                      the map (above) plots every row that geocoded.
+                      Anything left over — a row with `lat=NaN` or in
+                      `state.chatOnly` / `state.failed` / `state.pending`
+                      — is listed here so the visible "31" count matches
+                      what's actually accessible in the UI, and the user
+                      can click a row to focus it for the chat / description
+                      popup. Skipped in the Sheet view because the grid
+                      already lists these. */}
+                  {selectedCategory && (
+                    <AddressOnlyList
+                      mappable={filteredMappable}
+                      chatOnly={filteredChatOnly}
+                      onSelect={handleSelectSlug}
+                    />
+                  )}
+                </>
               ) : (
                 <LocationGrid
                   locations={[...filteredMappable, ...filteredChatOnly] as LocationDoc[]}
@@ -411,6 +469,64 @@ function LandingInner() {
           </div>
         </footer>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Address-only list that sits just under the map when a category filter
+ * is active. The map above plots whatever rows have finite lat/lng; this
+ * list surfaces every other row in the current category (chatOnly +
+ * any mappable whose coord-cache hit failed) so the visible count of
+ * "31 assets" matches what the user can actually reach in the UI.
+ * Hidden when the row would be empty. Hidden in the Sheet view because
+ * LocationGrid already lists every row.
+ */
+function AddressOnlyList({
+  mappable,
+  chatOnly,
+  onSelect,
+}: {
+  mappable: LocationDoc[];
+  chatOnly: LocationDoc[];
+  onSelect: (slug: string | null) => void;
+}) {
+  const unmapped: LocationDoc[] = [
+    ...chatOnly,
+    ...mappable.filter(
+      (m) => !Number.isFinite(m.lat) || !Number.isFinite(m.lng),
+    ),
+  ];
+  if (unmapped.length === 0) return null;
+  return (
+    <div className="mt-3 max-h-56 overflow-y-auto rounded-2xl border border-dashed border-accent/40 bg-accent/5 p-3 text-[12px]">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-accent">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+        {unmapped.length} more in this category — address-only (not on the map)
+      </div>
+      <ul className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+        {unmapped.map((m) => {
+          const addressBits =
+            [m.address, m.city].filter(Boolean).join(", ") ||
+            "Address unavailable";
+          return (
+            <li key={m.slug}>
+              <button
+                type="button"
+                onClick={() => onSelect(m.slug)}
+                className="block w-full rounded-lg border border-border/60 bg-background/70 px-2.5 py-1.5 text-left hover:border-accent/60 hover:bg-accent/10"
+              >
+                <div className="truncate font-medium text-foreground">
+                  {m.name}
+                </div>
+                <div className="truncate text-[10.5px] text-muted-foreground">
+                  {addressBits}
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
