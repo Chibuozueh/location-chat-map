@@ -530,19 +530,23 @@ async function callNebius(
 /**
  * Accepted env-var names for the map's sole provider.
  *
- * Cerebras (`api.cerebras.ai/v1/chat/completions`) is the OpenAI-compatible
- * fast-inference endpoint the map normalizer calls. After the user's request
- * to reserve Gemini exclusively for the chat assistant, the map chain is now
- * single-provider: one call, no fall-through. Set `CEREBRAS_MODEL` /
- * `CEREBRAS_BASE_URL` env vars to override the defaults.
+ * OpenRouter (`openrouter.ai/api/v1/chat/completions`) is the
+ * OpenAI-compatible endpoint the map normalizer calls. It replaces the prior
+ * Cerebras wiring at the user's request. After the request to reserve
+ * Gemini exclusively for the chat assistant, the map chain remains
+ * single-provider: one call, no fall-through. Set `OPENROUTER_MODEL` /
+ * `OPENROUTER_BASE_URL` env vars to override the defaults.
  */
-const CEREBRAS_KEY_ENV_NAMES = [
-  "CEREBRAS_API_KEY",
-  "CEREBRAS_KEY",
+const OPENROUTER_KEY_ENV_NAMES = [
+  // Freebuff Keys tab styling — what the user is currently pasting under.
+  "Map_Router_Key",
+  // Conventional OpenRouter naming.
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_KEY",
 ] as const;
 
-function readCerebrasKey(): { key: string | null; envName: string | null } {
-  for (const name of CEREBRAS_KEY_ENV_NAMES) {
+function readOpenRouterKey(): { key: string | null; envName: string | null } {
+  for (const name of OPENROUTER_KEY_ENV_NAMES) {
     const v = process.env[name];
     if (v && v.trim().length > 0) return { key: v.trim(), envName: name };
   }
@@ -550,38 +554,38 @@ function readCerebrasKey(): { key: string | null; envName: string | null } {
 }
 
 /**
- * Build a ProviderConfig snapshot for the map's Cerebras fallback. The
- * wire format (`{baseUrl}/chat/completions` + `Authorization: Bearer
- * <key>`) mirrors the OpenAI-compatible transport, so the same call
- * helper used by Nebius handles the round-trip unchanged.
+ * Build a ProviderConfig snapshot for the map's OpenRouter provider.
  *
- * Per-key knobs (overridable via env):
- *   - CEREBRAS_MODEL        (default: gpt-oss-120b)
- *   - CEREBRAS_BASE_URL     (default: https://api.cerebras.ai/v1)
+ * OpenRouter is OpenAI-compatible (`{baseUrl}/chat/completions` +
+ * `Authorization: Bearer <key>`), so the same call helper used by
+ * Nebius/Cerebras/Groq handles the round-trip unchanged. Default model
+ * is `meta-llama/llama-3.1-8b-instruct` — fast, cheap, and produces
+ * reliable structured-JSON output for the address-normalize prompt.
+ * Override with `OPENROUTER_MODEL` if you need a stronger model.
  */
-function buildMapCerebrasConfig(): ProviderConfig | null {
-  const { key, envName } = readCerebrasKey();
+function buildMapOpenRouterConfig(): ProviderConfig | null {
+  const { key, envName } = readOpenRouterKey();
   if (!key) return null;
   return {
     apiKey: key,
-    model: process.env.CEREBRAS_MODEL ?? "gpt-oss-120b",
+    model: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct",
     baseUrl:
-      process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
-    label: "Cerebras · gpt-oss-120b",
-    keyEnv: envName ?? "CEREBRAS_API_KEY",
+      process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+    label: "OpenRouter · meta-llama/llama-3.1-8b-instruct",
+    keyEnv: envName ?? "Map_Router_Key",
   };
 }
 
 /**
  * Wrapper used by `normalizeAddress` (the map-side pre-parser). **Single
- * call, single provider** — Cerebras only. Gemini is intentionally not in
- * the map chain so its quota can be reserved for the chat assistant; a
- * noisy CSV import will never starve the conversational replies.
+ * call, single provider** — OpenRouter only. Gemini is intentionally not
+ * in the map chain so its quota can be reserved for the chat assistant;
+ * a noisy CSV import will never starve the conversational replies.
  *
- * If `CEREBRAS_API_KEY` is not configured, returns a clear "add
- * CEREBRAS_API_KEY" hint and the row falls back to the deterministic
- * geocode cascade with its raw address — which still works for the
- * well-formed Atlanta-area CSVs this app targets.
+ * If `Map_Router_Key` (or `OPENROUTER_API_KEY`) is not configured, returns
+ * a clear "add it to the Keys tab" hint and the row falls back to the
+ * deterministic geocode cascade with its raw address — which still works
+ * for the well-formed Atlanta-area CSVs this app targets.
  */
 async function callAddressNormalizer(opts: {
   system: string;
@@ -589,17 +593,17 @@ async function callAddressNormalizer(opts: {
   maxOutputTokens?: number;
   temperature?: number;
 }): Promise<LLMResult> {
-  const cfg = buildMapCerebrasConfig();
+  const cfg = buildMapOpenRouterConfig();
   if (!cfg) {
     return {
       error:
-        "Map AI offline — add CEREBRAS_API_KEY in the project's Keys/API keys tab to enable AI address normalization. (Gemini is reserved for the chat assistant and is not used on the map.)",
+        "Map AI offline — add Map_Router_Key (or OPENROUTER_API_KEY) in the project's Keys/API keys tab to enable AI address normalization. (Gemini is reserved for the chat assistant and is not used on the map.)",
     };
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    const result = await callCerebras(cfg, {
+    const result = await callOpenRouter(cfg, {
       system: opts.system,
       user: opts.user,
       signal: controller.signal,
@@ -622,10 +626,16 @@ async function callAddressNormalizer(opts: {
 }
 
 /**
- * Map-side Cerebras transport. Same OpenAI-compat shape as Nebius, just
- * a different base URL + model. Returns `{content?, error?, providerLabel?}`.
+ * Map-side OpenRouter transport. Same OpenAI-compat shape as Nebius /
+ * Cerebras / Groq — `Authorization: Bearer <key>` + `/chat/completions` —
+ * just a different base URL + model. Returns
+ * `{content?, error?, providerLabel?}`.
+ *
+ * Optional analytics headers (`HTTP-Referer`, `X-Title`) are intentionally
+ * not sent so the wire stays byte-identical to the chat-side transports
+ * we already use elsewhere. OpenRouter accepts calls without them.
  */
-async function callCerebras(
+async function callOpenRouter(
   cfg: ProviderConfig,
   opts: CallOpts,
 ): Promise<LLMResult> {
@@ -662,7 +672,7 @@ async function callCerebras(
       }
       if (isRateLimit) {
         return {
-          error: `Atlas Assistant is offline — ${rateLimitHint(res, "Cerebras")}`,
+          error: `Atlas Assistant is offline — ${rateLimitHint(res, "OpenRouter")}`,
         };
       }
       return {
@@ -676,7 +686,7 @@ async function callCerebras(
     return { content: String(content).trim() };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[chatComplete] cerebras error", msg);
+    console.error("[chatComplete] openrouter error", msg);
     if (msg.includes("abort")) {
       return { error: "Atlas Assistant timed out. Try a sharper question." };
     }
@@ -712,22 +722,23 @@ export async function providerStatus(): Promise<{
   } | null;
   triedEnvVars: string[];
   /**
-   * Map-side Cerebras provider (`gpt-oss-120b`, OpenAI-compat fast
-   * inference). The map chain now resolves to Cerebras only — Gemini is
-   * reserved for the chat assistant. Surfaced here so the user can
-   * confirm the key is actually visible to the Convex runtime.
+   * Map-side OpenRouter provider (default `meta-llama/llama-3.1-8b-
+   * instruct`, OpenAI-compat fast inference). The map chain is now single-
+   * provider — Cerebras was retired in favor of OpenRouter. Gemini
+   * remains reserved for the chat assistant. Surfaced here so the user
+   * can confirm the key is actually visible to the Convex runtime.
    */
-  cerebrasKey: {
+  openrouterKey: {
     configured: boolean;
     activeEnvName: string | null;
     label: string;
     model: string;
   };
-  cerebrasKeyEnvVars: string[];
+  openrouterKeyEnvVars: string[];
 }> {
   const chain = resolveProviders();
   const primary = resolvePrimaryProvider();
-  const cerebrasCfg = buildMapCerebrasConfig();
+  const openrouterCfg = buildMapOpenRouterConfig();
   return {
     chain: chain.map(({ name, cfg }) => ({
       name,
@@ -745,20 +756,21 @@ export async function providerStatus(): Promise<{
         }
       : null,
     triedEnvVars: [...GROQ_KEY_ENV_NAMES, ...GEMINI_KEY_ENV_NAMES],
-    cerebrasKey: cerebrasCfg
+    openrouterKey: openrouterCfg
       ? {
           configured: true,
-          activeEnvName: cerebrasCfg.keyEnv,
-          label: cerebrasCfg.label,
-          model: cerebrasCfg.model,
+          activeEnvName: openrouterCfg.keyEnv,
+          label: openrouterCfg.label,
+          model: openrouterCfg.model,
         }
       : {
           configured: false,
           activeEnvName: null,
-          label: "Cerebras · gpt-oss-120b",
-          model: process.env.CEREBRAS_MODEL ?? "gpt-oss-120b",
+          label: "OpenRouter · meta-llama/llama-3.1-8b-instruct",
+          model:
+            process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct",
         },
-    cerebrasKeyEnvVars: [...CEREBRAS_KEY_ENV_NAMES],
+    openrouterKeyEnvVars: [...OPENROUTER_KEY_ENV_NAMES],
   };
 }
 
