@@ -34,8 +34,8 @@ class ToolbarErrorBoundary extends React.Component<
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-  componentDidCatch(err: Error) {
-    console.warn("[VlyToolbar] Caught error, toolbar disabled:", err.message);
+  componentDidCatch() {
+    // intentionally no-op — silent recovery
   }
   render() {
     return this.state.hasError ? null : this.props.children;
@@ -43,27 +43,53 @@ class ToolbarErrorBoundary extends React.Component<
 }
 
 /** Hard guard so runtime errors never leave the preview as a blank page.
- *  Uses SOLID inline colors so the error UI is always visible regardless of
- *  whether the theme CSS has loaded. */
+ *
+ *  IMPORTANT: `getDerivedStateFromError` was the culprit behind several
+ *  "App did not mount in time" incidents — when an Error Boundary
+ *  itself throws while handling an error, React unmounts the entire
+ *  tree, leaving `#root` empty and the fallback UI invisible.
+ *  We now defensively normalise whatever gets thrown so the boundary
+ *  cannot crash on a non-Error value.
+ *
+ *  Uses SOLID inline colors for the error UI so it's always visible
+ *  regardless of whether the theme CSS has loaded. */
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; message: string; stack: string }
 > {
   state = { hasError: false, message: "", stack: "" };
-  static getDerivedStateFromError(error: Error) {
-    return {
-      hasError: true,
-      message: error.message || "Unknown runtime error",
-      stack: error.stack || "",
-    };
+  static getDerivedStateFromError(error: unknown) {
+    let message = "Unknown runtime error";
+    let stack = "";
+    if (error instanceof Error) {
+      message = error.message || message;
+      stack = error.stack || "";
+    } else if (typeof error === "string") {
+      message = error;
+    } else if (error && typeof error === "object") {
+      try {
+        message =
+          (error as { message?: unknown }).message
+            ? String((error as { message: unknown }).message)
+            : JSON.stringify(error);
+      } catch {
+        message = "Non-serializable thrown value";
+      }
+    } else if (error !== undefined && error !== null) {
+      message = String(error);
+    }
+    return { hasError: true, message, stack };
   }
-  componentDidCatch(err: Error) {
-    console.error("[WebContainer preview] Root crash:", err);
+  componentDidCatch(error: unknown) {
+    // Defensive: never crash inside the error boundary.
+    try {
+      console.error("[WebContainer preview] Root crash:", error);
+    } catch {
+      /* ignore */
+    }
   }
   render() {
     if (this.state.hasError) {
-      // Inline styles guarantee visibility even if Tailwind/theme CSS hasn't
-      // loaded or resolves to near-white-on-white colors.
       return (
         <div
           style={{
@@ -106,7 +132,9 @@ class RootErrorBoundary extends React.Component<
   }
 }
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+const convex = new ConvexReactClient(
+  (import.meta.env.VITE_CONVEX_URL as string) || "https://placeholder.invalid",
+);
 
 function AppRoot() {
   return (
@@ -165,12 +193,35 @@ function RouteSyncer() {
 // production to keep the dev-safety net for the rest of the app.
 const isProd = import.meta.env.PROD;
 
-createRoot(document.getElementById("root")!).render(
-  isProd ? (
-    <StrictMode>
-      <AppRoot />
-    </StrictMode>
-  ) : (
-    <AppRoot />
-  ),
-);
+const rootEl = document.getElementById("root");
+if (!rootEl) {
+  document.body.innerHTML =
+    '<div style="position:fixed;inset:0;padding:32px;background:#fff1f2;color:#7f1d1d;font:14px ui-monospace,monospace;">#root element missing from index.html</div>';
+} else {
+  try {
+    createRoot(rootEl).render(
+      isProd ? (
+        <StrictMode>
+          <AppRoot />
+        </StrictMode>
+      ) : (
+        <AppRoot />
+      ),
+    );
+    // Tag the root so the index.html "did not mount" timer knows React
+    // committed at least once and shouldn't show its diagnostic overlay.
+    rootEl.setAttribute("data-react-mounted", "1");
+  } catch (err) {
+    // createRoot or sync render threw — write directly to root so the
+    // user sees the actual exception instead of a blank page.
+    const message =
+      err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack || "" : "";
+    rootEl.innerHTML =
+      '<div style="position:fixed;inset:0;overflow:auto;padding:32px;background:#fff1f2;color:#7f1d1d;font:14px ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;">' +
+      "<strong>createRoot / render threw:</strong>\n\n" +
+      message +
+      (stack ? "\n\n----\n" + stack : "") +
+      "</div>";
+  }
+}

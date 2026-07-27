@@ -180,6 +180,11 @@ const DEFAULT_LLM_NORMALIZE_SPACING_MS = 4_000;
 export function ImportedDataProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ImportedState>(EMPTY);
   const [importing, setImporting] = useState(false);
+  // These function references come from `convex/_generated/api` and are
+  // resolved at build time by `bun convex dev --once`. If a reference is
+  // ever undefined (e.g. a stale generated file missing a recently-added
+  // action), the action call below will throw — that's caught inside the
+  // per-row loop and logged, not propagated up to crash the render tree.
   const geocode = useAction(api.geocode.geocodeAddress);
   // Tier-5: the AI-assisted address normalizer. Gracefully returns
   // ok=false when no API key is set so this degrades into "no behavior

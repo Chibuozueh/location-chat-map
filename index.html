@@ -48,19 +48,23 @@
         String(reason).replace(/</g, "&lt;") + "<br><br>" + stack
       );
     };
-    // If the root element is still empty after 6s, something prevented React
-    // from mounting. Surface that instead of leaving a blank page.
+    // If after 8s React has still not mounted, surface that instead of
+    // leaving a blank page. We check BOTH the "data-react-mounted"
+    // attribute (set by src/main.tsx right after a successful render)
+    // AND child-node count, so a successful render is never replaced by
+    // the diagnostic.
     setTimeout(function () {
       const root = document.getElementById("root");
-      if (root && root.childNodes.length === 0) {
-        renderError(
-          "App did not mount in time.",
-          "The JavaScript bundle loaded, but React never rendered into #root.\n" +
-          "This usually means a module-evaluation error occurred before React could start.\n" +
-          "Try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R)."
-        );
-      }
-    }, 6000);
+      if (!root) return;
+      const mounted = root.getAttribute && root.getAttribute("data-react-mounted") === "1";
+      if (mounted || root.childNodes.length > 0) return;
+      renderError(
+        "App did not mount in time.",
+        "The JavaScript bundle loaded, but React never rendered into #root.\n" +
+        "This usually means a module-evaluation error occurred before React could start.\n" +
+        "Try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R)."
+      );
+    }, 8000);
   </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
