@@ -8,7 +8,22 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, AtSign, Globe, Mail, Phone, Plus, Minus, X } from "lucide-react";
+import {
+  ArrowRight,
+  AtSign,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Globe,
+  Mail,
+  MapPin,
+  Navigation,
+  Phone,
+  Plus,
+  Minus,
+  X,
+} from "lucide-react";
 import {
   CATEGORY_LABEL,
   FEATURE_LABEL,
@@ -177,6 +192,9 @@ function DescriptionCard({
   point: AnchorPoint;
   onClose: () => void;
 }) {
+  const [showAddress, setShowAddress] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   const isMobile = useIsMobile();
   const cardWidth = 300;
   const offsetAbove = 56;
@@ -232,6 +250,110 @@ function DescriptionCard({
           </div>
         </div>
         {/* Contact links — always visible at the bottom */}
+        {/* Address toggle + reveal — between description and contact strip */}
+        {(loc.address || loc.city || loc.state || loc.postalCode) && (
+          <div className="border-t border-[#6e0e1e1f]">
+            <div className="px-4 pt-2.5">
+              <button
+                type="button"
+                onClick={() => setShowAddress((s) => !s)}
+                aria-expanded={showAddress}
+                aria-label={
+                  showAddress ? "Hide asset address" : "Show asset address"
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2.5 py-1 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+              >
+                <MapPin className="h-3 w-3" />
+                {showAddress ? "Hide address" : "Show address"}
+                {showAddress ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+            </div>
+            <AnimatePresence initial={false}>
+              {showAddress && (
+                <motion.div
+                  key="addr"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className="overflow-hidden"
+                >
+                  <div className="mx-4 mt-2 mb-3 rounded-lg border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[11px] leading-relaxed text-[#0e0a0b]">
+                    <div className="font-semibold tabular-nums">
+                      {loc.address}
+                      {loc.address &&
+                      (loc.city || loc.state || loc.postalCode)
+                        ? ", "
+                        : ""}
+                      {[loc.city, loc.state, loc.postalCode]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          [loc.address, loc.city, loc.state, loc.postalCode]
+                            .filter(Boolean)
+                            .join(", "),
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+                      >
+                        <Navigation className="h-3 w-3" /> Directions
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = [
+                            loc.address,
+                            loc.city,
+                            loc.state,
+                            loc.postalCode,
+                          ]
+                            .filter(Boolean)
+                            .join(", ");
+                          if (!text) return;
+                          if (
+                            typeof navigator !== "undefined" &&
+                            navigator.clipboard?.writeText
+                          ) {
+                            navigator.clipboard
+                              .writeText(text)
+                              .then(() => {
+                                setCopied(true);
+                                setTimeout(
+                                  () => setCopied(false),
+                                  2000,
+                                );
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-3 w-3 text-[#6e0e1e]" /> Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3 text-[#6e0e1e]" /> Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
         {(loc.website ||
           loc.socialMedia ||
           loc.contactName ||
@@ -322,6 +444,110 @@ function DescriptionCard({
             </span>
           )}
         </div>
+        {/* Address toggle + reveal — between description and contact strip */}
+        {(loc.address || loc.city || loc.state || loc.postalCode) && (
+          <div className="border-t border-[#6e0e1e1f]">
+            <div className="px-4 pt-2.5">
+              <button
+                type="button"
+                onClick={() => setShowAddress((s) => !s)}
+                aria-expanded={showAddress}
+                aria-label={
+                  showAddress ? "Hide asset address" : "Show asset address"
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2.5 py-1 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+              >
+                <MapPin className="h-3 w-3" />
+                {showAddress ? "Hide address" : "Show address"}
+                {showAddress ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+            </div>
+            <AnimatePresence initial={false}>
+              {showAddress && (
+                <motion.div
+                  key="addr"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className="overflow-hidden"
+                >
+                  <div className="mx-4 mt-2 mb-3 rounded-lg border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[11px] leading-relaxed text-[#0e0a0b]">
+                    <div className="font-semibold tabular-nums">
+                      {loc.address}
+                      {loc.address &&
+                      (loc.city || loc.state || loc.postalCode)
+                        ? ", "
+                        : ""}
+                      {[loc.city, loc.state, loc.postalCode]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          [loc.address, loc.city, loc.state, loc.postalCode]
+                            .filter(Boolean)
+                            .join(", "),
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+                      >
+                        <Navigation className="h-3 w-3" /> Directions
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = [
+                            loc.address,
+                            loc.city,
+                            loc.state,
+                            loc.postalCode,
+                          ]
+                            .filter(Boolean)
+                            .join(", ");
+                          if (!text) return;
+                          if (
+                            typeof navigator !== "undefined" &&
+                            navigator.clipboard?.writeText
+                          ) {
+                            navigator.clipboard
+                              .writeText(text)
+                              .then(() => {
+                                setCopied(true);
+                                setTimeout(
+                                  () => setCopied(false),
+                                  2000,
+                                );
+                              })
+                              .catch(() => {});
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-3 w-3 text-[#6e0e1e]" /> Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3 text-[#6e0e1e]" /> Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
         {(loc.website ||
           loc.socialMedia ||
           loc.contactName ||

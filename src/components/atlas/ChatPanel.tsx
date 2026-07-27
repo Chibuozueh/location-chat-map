@@ -4,14 +4,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUp,
   Bot,
+  Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   Database,
   FileSpreadsheet,
   Info,
   Link,
   Loader2,
   MapPin,
+  Navigation,
   Sparkles,
   X,
 } from "lucide-react";
@@ -128,6 +131,8 @@ function EvidenceCard({
   ev: AssetEvidence;
   onCitation: (slug: string) => void;
 }) {
+  const [showAddress, setShowAddress] = useState(false);
+  const [copied, setCopied] = useState(false);
   const hasAnyFact =
     !!ev.addressLine ||
     !!ev.hoursToday ||
@@ -168,6 +173,22 @@ function EvidenceCard({
             {ev.priceLine}
           </span>
         )}
+        {ev.addressLine && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setShowAddress((s) => !s);
+            }}
+            aria-expanded={showAddress}
+            aria-label={showAddress ? "Hide address" : "Show address"}
+            className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
+          >
+            <MapPin className="h-3 w-3" />
+            {showAddress ? "Hide address" : "Show address"}
+          </button>
+        )}
         {ev.ratingLine && (
           <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
             {ev.ratingLine}
@@ -182,7 +203,7 @@ function EvidenceCard({
               <dd className="text-foreground/85">{ev.tagline}</dd>
             </>
           )}
-          {ev.addressLine && (
+          {showAddress && ev.addressLine && (
             <>
               <dt className="text-muted-foreground">Address</dt>
               <dd className="text-foreground/85">{ev.addressLine}</dd>
