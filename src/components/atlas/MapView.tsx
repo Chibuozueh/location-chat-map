@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   Marker,
@@ -196,6 +196,11 @@ function DescriptionCard({
   point: AnchorPoint;
   onClose: () => void;
 }) {
+  // Ref to the desktop-variant motion.div so useLayoutEffect can measure
+  // its real height and pin the pointer's tip to `point.y` (the asset's
+  // screen-space location). Avoids re-rendering with a guessed offset.
+  const cardRef = useRef<HTMLDivElement>(null);
+
   // Read the AI-cleaned address (NOT the raw spreadsheet) when present;
   // fall back to the raw address for rows that bypassed the AI path.
   const addr = resolveDisplayAddress(loc);
@@ -214,11 +219,32 @@ function DescriptionCard({
 
   const isMobile = useIsMobile();
   const cardWidth = 260;
-  const offsetAbove = 48;
+  // Default offset is large enough to roughly cover the card height so
+  // the very first paint (before useLayoutEffect runs) doesn't sit on top
+  // of the asset. useLayoutEffect below snaps the actual top to the
+  // measured card height + pointer reach so the tip lands on `point.y`.
+  const fallbackOffset = 320;
   const left = Math.round(point.x - cardWidth / 2);
-  const top = Math.round(point.y - offsetAbove);
+  const top = Math.round(point.y - fallbackOffset);
   // On desktop, clamp left so the card doesn't clip off the left edge.
   const clampedLeft = Math.max(8, left);
+
+  // Snap the card's top so the triangular pointer (rendered at
+  // `-bottom-2 left-1/2`, 14px square rotated 45°) lands with its tip
+  // exactly on the asset's screen-space y. Re-runs whenever the card's
+  // content changes (loc swap) or the pin moves on map pan/zoom, so the
+  // pointer always stays anchored to the asset.
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el || !point.visible) return;
+    const h = el.offsetHeight;
+    // pointer's tip is 8px below the card's bottom edge (the `-bottom-2`
+    // offset of the rotated span). So `cardBottom + 8 = point.y` →
+    // `cardTop = point.y - h - 8`. Clamp so we never push off the top of
+    // the map container for assets near the top edge.
+    const newTop = Math.max(8, Math.round(point.y - h - 8));
+    el.style.top = `${newTop}px`;
+  }, [point.x, point.y, point.visible, loc?.slug, isMobile]);
 
   // On mobile, anchor as a bottom sheet within the map instead of pin-anchored.
   // Contact links are always visible at the bottom of the card; only the
@@ -347,6 +373,7 @@ function DescriptionCard({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.97 }}
       transition={{ type: "spring", stiffness: 240, damping: 22 }}
+      ref={cardRef}
       style={{ left: clampedLeft, top, width: cardWidth }}
       className="pointer-events-auto absolute z-[600] rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f]"
       role="dialog"
