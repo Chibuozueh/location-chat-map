@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
-import { LayoutGrid, Map as MapIcon, Minimize2 } from "lucide-react";
+import { Bug, LayoutGrid, Map as MapIcon, Minimize2 } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { AppHeader } from "@/components/atlas/AppHeader";
 import { AtlasHero } from "@/components/atlas/AtlasHero";
@@ -429,6 +429,13 @@ function LandingInner() {
           />
         </div>
 
+        {/* Debug panel — temporary visibility into WHY rows aren't
+            mapping. Toggle the `?debug` query string or click the
+            floating button. The chip on the button writes the same
+            payload to the browser console so a single devtools link is
+            enough to share it back. */}
+        <DebugPanel state={importedState} />
+
         <div
           ref={exploreRef}
           className={`mt-8 grid gap-4 md:mt-10 md:gap-6 transition-[grid-template-columns] duration-300 ${
@@ -713,5 +720,178 @@ export default function Landing() {
     <ImportedDataProvider>
       <LandingInner />
     </ImportedDataProvider>
+  );
+}
+
+/**
+ * Floating debug chip + collapsible panel. Surfaces the contents of
+ * `importedState.failed[]` (with per-row reasons) and the discovered
+ * Sheets tabs so a single screenshot of this panel tells us WHY the
+ * 28 rows aren't mapping — without us having to apply speculative
+ * fixes to a pipeline that's already covered most paths.
+ *
+ * Hidden by default; appears at the bottom-right when there is
+ * anything to debug (failed rows OR >0 discovered tabs). The "Log to
+ * console" button writes the failure rows to `console.table()` so the
+ * payload can be copy-pasted straight from DevTools.
+ *
+ * Safe to delete once the geocode pipeline is fully resolved.
+ */
+function DebugPanel({ state }: { state: ReturnType<typeof useImportedData>["state"] }) {
+  const [open, setOpen] = useState(false);
+  const failed = state.failed;
+  const discoveredTabs = state.discoveredTabs;
+
+  // Nothing to debug → don't render anything.
+  if (failed.length === 0 && discoveredTabs.length === 0) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 max-w-2xl">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-2 rounded-full border border-accent bg-background/95 px-3 py-1.5 text-[11px] font-medium text-accent shadow-pop backdrop-blur transition hover:bg-accent/10"
+      >
+        <Bug className="h-3 w-3" />
+        <span>
+          {open ? "Hide" : "Show"} debug
+        </span>
+        {failed.length > 0 && (
+          <span className="ml-1 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-foreground">
+            {failed.length} failed
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="mt-2 max-h-[70vh] overflow-y-auto rounded-2xl border border-accent/40 bg-background/95 p-3 text-[11.5px] shadow-pop backdrop-blur">
+          {/* State summary — quick read on where every row went. */}
+          <div className="mb-2 flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+            <span>
+              <strong className="text-foreground">rows:</strong> {state.rows.length}
+            </span>
+            <span>
+              <strong className="text-foreground">pending:</strong> {state.pending.length}
+            </span>
+            <span>
+              <strong className="text-foreground">failed:</strong>{" "}
+              <span className={failed.length > 0 ? "text-accent" : ""}>
+                {failed.length}
+              </span>
+            </span>
+            <span>
+              <strong className="text-foreground">chatOnly:</strong> {state.chatOnly.length}
+            </span>
+            <span>
+              <strong className="text-foreground">tabs:</strong> {discoveredTabs.length}
+            </span>
+            <span>
+              <strong className="text-foreground">source:</strong> {state.source ?? "—"}
+            </span>
+            <span>
+              <strong className="text-foreground">active:</strong>{" "}
+              {state.progress.active ? "yes" : "no"}
+            </span>
+          </div>
+
+          {/* Discovered tabs. Critical for confirming that we are
+              actually pulling only the asset tabs the user expects
+              (vs. accidentally importing validation / instructions
+              rows that bump the count). */}
+          {discoveredTabs.length > 0 && (
+            <div className="mb-3 rounded-lg border border-border/60 bg-card/60 p-2">
+              <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                Discovered tabs ({discoveredTabs.length})
+              </div>
+              <ul className="space-y-0.5">
+                {discoveredTabs.map((t) => (
+                  <li
+                    key={t.gid}
+                    className="flex justify-between gap-3 font-mono text-[10.5px]"
+                  >
+                    <span className="truncate">
+                      {t.name ?? "(unnamed)"}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {t.rowCount} rows · gid {t.gid}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Failed geocoding rows. Each row carries a `reason`
+              string that explains which tier rejected it and why.
+              Reading the first 3-5 reasons here is the fastest path to
+              confirming whether the "28 missing" are junk data,
+              landmark hits OpenRouter mis-classified, or genuinely
+              unreachable addresses. */}
+          {failed.length > 0 && (
+            <div className="rounded-lg border border-accent/40 bg-accent/5 p-2">
+              <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-accent">
+                <span>Failed geocoding ({failed.length})</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    console.table(
+                      failed.map((f) => ({
+                        name: f.doc.name,
+                        category: f.doc.category,
+                        address: f.doc.address,
+                        city: f.doc.city,
+                        state: f.doc.state,
+                        zip: f.doc.postalCode,
+                        reason: f.reason,
+                      })),
+                    )
+                  }
+                  className="rounded border border-accent/40 bg-background px-1.5 py-0.5 text-[10px] normal-case tracking-normal text-accent transition hover:bg-accent/10"
+                >
+                  Log to console
+                </button>
+              </div>
+              <div className="max-h-80 overflow-y-auto">
+                <table className="w-full text-[11px]">
+                  <thead className="sticky top-0 bg-background/95 backdrop-blur">
+                    <tr className="text-left text-muted-foreground">
+                      <th className="pr-2 pb-1 font-medium">Name</th>
+                      <th className="pr-2 pb-1 font-medium">Address</th>
+                      <th className="pr-2 pb-1 font-medium">ZIP</th>
+                      <th className="pb-1 font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failed.map((f, i) => (
+                      <tr
+                        key={f.id ?? i}
+                        className="border-t border-border/30"
+                      >
+                        <td className="pr-2 py-1 font-medium">
+                          {f.doc.name || (
+                            <span className="italic text-muted-foreground">
+                              (empty)
+                            </span>
+                          )}
+                        </td>
+                        <td className="pr-2 py-1 font-mono text-[10.5px] text-muted-foreground">
+                          {f.doc.address ?? "—"}
+                        </td>
+                        <td className="pr-2 py-1 font-mono text-[10.5px]">
+                          {f.doc.postalCode ?? "—"}
+                        </td>
+                        <td className="py-1 text-[10.5px] text-accent">
+                          {f.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
