@@ -77,6 +77,15 @@ export default defineConfig({
     // Only scan the app entry HTML; avoids crawling unrelated *.html files
     // if a legacy snapshot accidentally contains leaked package folders.
     entries: ['index.html'],
+    // Force-list every dependency that's lazily pre-bundled in dev so the
+    // dep cache rebuilds deterministically on every server start. This
+    // is the fix for the @radix-ui_react-tabs.js?v=a2d14e62 "stale
+    // optimize manifest" symptom: when a dep is missing from `include`
+    // and Vite's on-demand scanner hits it through a lazy chunk
+    // (CategoryFilter → Tabs → @radix-ui/react-tabs), the resulting
+    // chunk can carry an incompatible React namespace / peer-dep
+    // resolution that crashes at runtime. Pinning the whole Radix
+    // family here guarantees a clean rebuild.
     include: [
       'react',
       'react/jsx-runtime',
@@ -85,6 +94,40 @@ export default defineConfig({
       'react-router',
       '@convex-dev/auth/react',
       'framer-motion',
+      // Radix UI primitives — all of them — so the pre-bundled cache
+      // is rebuilt cohesively. (CategoryFilter uses Tabs; other
+      // components use Dialog, Popover, Select, ScrollArea, etc.)
+      '@radix-ui/react-accordion',
+      '@radix-ui/react-alert-dialog',
+      '@radix-ui/react-aspect-ratio',
+      '@radix-ui/react-avatar',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-collapsible',
+      '@radix-ui/react-context-menu',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-hover-card',
+      '@radix-ui/react-label',
+      '@radix-ui/react-menubar',
+      '@radix-ui/react-navigation-menu',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-progress',
+      '@radix-ui/react-radio-group',
+      '@radix-ui/react-scroll-area',
+      '@radix-ui/react-select',
+      '@radix-ui/react-separator',
+      '@radix-ui/react-slider',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-switch',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-toggle',
+      '@radix-ui/react-toggle-group',
+      '@radix-ui/react-tooltip',
+      // Other heavyweight deps that benefit from a deterministic
+      // pre-bundle so HMR + dev-server restarts stay stable.
+      'leaflet',
+      'react-leaflet',
+      '@lottiefiles/react-lottie-player',
     ],
   },
   // Performance hints
