@@ -8,12 +8,22 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
-// Auth and 404 are secondary routes, keep them lazy. Landing is the root
-// route; eager import it so Vite's dev-server lazy-fetch bug is bypassed
-// and any real module-evaluation error surfaces immediately.
-import Landing from "./pages/Landing.tsx";
-const AuthPage = lazy(() => import("./pages/Auth.tsx"));
-const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+// Retry a dynamic import once if the dev server's module graph is momentarily
+// stale, so the preview doesn't get stuck on a blank page.
+function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
+  factory: () => Promise<T>,
+) {
+  return lazy(() =>
+    factory().catch((error) => {
+      console.warn("[lazyWithRetry] First import failed, retrying once:", error);
+      return factory();
+    }),
+  );
+}
+
+const LandingRoute = lazyWithRetry(() => import("./pages/Landing.tsx"));
+const AuthPage = lazyWithRetry(() => import("./pages/Auth.tsx"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -93,7 +103,7 @@ function AppRoot() {
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
-              <Route path="/" element={<Landing />} />
+              <Route path="/" element={<LandingRoute />} />
               <Route path="/auth" element={<AuthPage redirectAfterAuth="/" />} /> {/* TODO: change redirect after auth to correct page */}
               <Route path="*" element={<NotFound />} />
             </Routes>

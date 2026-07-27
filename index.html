@@ -18,20 +18,49 @@
 
 <body>
   <div id="root"></div>
-  <!-- Diagnostic: surface top-level module-evaluation errors so we can
-       see the real cause instead of a blank page. Removed once fixed. -->
+  <!-- Diagnostic: surface top-level module-evaluation and promise-rejection
+       errors so we can see the real cause instead of a blank page. Removed
+       once the root cause is fixed. -->
   <script>
-    window.onerror = function (msg, url, line, col, error) {
+    function showDiagnostic(html) {
       const el = document.getElementById("root");
-      if (el) {
-        el.innerHTML =
-          '<div style="padding:24px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#b91c1c;background:#fff1f2;min-height:100vh;"><strong>Top-level runtime error:</strong><br>' +
-          String(msg) +
-          '<br>at ' + url + ':' + line + ':' + col + '<br><br>' +
-          (error && error.stack ? error.stack : '') +
-          '</div>';
-      }
+      if (!el) return;
+      el.innerHTML = html;
+    }
+    function renderError(title, body) {
+      showDiagnostic(
+        '<div style="padding:24px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#b91c1c;background:#fff1f2;min-height:100vh;"><strong>' +
+        title + '</strong><br>' + body + '</div>'
+      );
+    }
+    window.onerror = function (msg, url, line, col, error) {
+      renderError(
+        "Top-level runtime error:",
+        String(msg) + "<br>at " + url + ":" + line + ":" + col + "<br><br>" +
+        (error && error.stack ? error.stack.replace(/</g, "&lt;") : "")
+      );
     };
+    window.onunhandledrejection = function (event) {
+      var reason = event.reason;
+      var stack = reason && reason.stack ? reason.stack.replace(/</g, "&lt;") : "";
+      renderError(
+        "Unhandled promise rejection:",
+        String(reason).replace(/</g, "&lt;") + "<br><br>" + stack
+      );
+    };
+    // If the root element is still empty after 6s, something prevented React
+    // from mounting. Surface that instead of leaving a blank page.
+    setTimeout(function () {
+      const root = document.getElementById("root");
+      if (root && root.childNodes.length === 0) {
+        renderError(
+          "App did not mount in time.",
+          "The JavaScript bundle loaded, but React never rendered into #root.\n" +
+          "This usually means a module-evaluation error occurred before React could start.\n" +
+          "Try a hard refresh (Ctrl+Shift+R / Cmd+Shift+R)."
+        );
+      }
+    }, 6000);
   </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
