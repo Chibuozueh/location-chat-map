@@ -8,6 +8,7 @@ import { MapView } from "@/components/atlas/MapView";
 import { ChatPanel } from "@/components/atlas/ChatPanel";
 import { LocationGrid } from "@/components/atlas/LocationGrid";
 import { CategoryFilter } from "@/components/atlas/CategoryFilter";
+import { AssetDescriptionPanel } from "@/components/atlas/AssetDescriptionPanel";
 import {
   ImportedDataProvider,
   clusterByAddress,
@@ -637,8 +638,17 @@ function LandingInner() {
 
         {/* Description overlay is rendered inside MapView itself (the
             maroon-bordered DescriptionCard that anchors to the selected
-            pin). Rendering a second card here would clip the map and
-            double the description on screen. */}
+            pin). For the Sheet / Tools view — where there's no map to
+            pin against — `<AssetDescriptionPanel>` mounts on the right
+            side of the viewport with the same data so the picked
+            asset's description, contact strip, and tag-line chrome
+            are always visible regardless of which view is active. We
+            gate on `view !== "map"` so the pin-anchored variant and
+            the floating variant never render simultaneously. */}
+        <AssetDescriptionPanel
+          loc={view === "sheet" ? selectedDoc : null}
+          onClose={() => setSelected(null)}
+        />
 
         {/* Subtle footer */}
         <footer className="mt-12 flex flex-col items-start justify-between gap-2 border-t border-border/60 pt-6 text-[11.5px] text-muted-foreground sm:flex-row sm:items-center">
