@@ -663,7 +663,18 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           source = "cached";
         }
 
-        // Step 2: Cerebras normalize FIRST (skip if no street OR no key).
+        // Step 2: Atlas Map AI normalize. Always invoked for rows
+        // that still need geocoding — even ZIP-less rows with no
+        // street in the spreadsheet and no geoKey. The AI's landmark-
+        // resolution rules can fill in a real address from just the
+        // asset-name hint + Atlanta context, which is the only path
+        // that recovers "MARTA Bankhead" / "West Atlanta Watershed
+        // Alliance"-style rows. Previously gated on
+        // `rawStreet.length > 0 && key`, that gate silently bypassed
+        // every row missing either field — exactly the 28 the user
+        // was seeing. We always call now; rows without an address
+        // still get passed `rawStreet=""` so the AI can use the
+        // asset-name hint alone.
         let addressForGeocode: AddressFragment = {
           street: doc.address ?? "",
           city: doc.city ?? "",
@@ -672,7 +683,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
           country: doc.country || "USA",
         };
 
-        if (!coord && rawStreet.length > 0 && key) {
+        if (!coord) {
           const cleanCacheKey = `clean:${key}`;
           const cachedClean = normalizeCacheRef.current.get(cleanCacheKey);
           let cleaned: {

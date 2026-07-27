@@ -538,11 +538,18 @@ async function callNebius(
  * `OPENROUTER_BASE_URL` env vars to override the defaults.
  */
 const OPENROUTER_KEY_ENV_NAMES = [
-  // Freebuff Keys tab styling — what the user is currently pasting under.
+  // Freebuff Keys tab styling — what the user is currently pasting
+  // under. Accept MANY casing variants because the Freebuff keys UI
+  // has historically been case-sensitive in env-var resolution.
   "Map_Router_Key",
+  "MAP_ROUTER_KEY",
+  "MapRouterKey",
+  "MAPROUTER_KEY",
+  "MAPROUTER",
   // Conventional OpenRouter naming.
   "OPENROUTER_API_KEY",
   "OPENROUTER_KEY",
+  "OPENROUTER",
 ] as const;
 
 function readOpenRouterKey(): { key: string | null; envName: string | null } {
@@ -595,6 +602,14 @@ async function callAddressNormalizer(opts: {
 }): Promise<LLMResult> {
   const cfg = buildMapOpenRouterConfig();
   if (!cfg) {
+    // Surface the env-var lookup result so the user can verify in the
+    // Convex dashboard logs whether the key was actually visible.
+    // Filter the server console by `[mapNormalizer] env-lookup`.
+    console.warn(
+      "[mapNormalizer] env-lookup failed — none of [" +
+        OPENROUTER_KEY_ENV_NAMES.join(", ") +
+        "] are visible to the Convex runtime. Returning offline error.",
+    );
     return {
       error:
         "Map AI offline — add Map_Router_Key (or OPENROUTER_API_KEY) in the project's Keys/API keys tab to enable AI address normalization. (Gemini is reserved for the chat assistant and is not used on the map.)",
@@ -640,6 +655,13 @@ async function callOpenRouter(
   opts: CallOpts,
 ): Promise<LLMResult> {
   const url = `${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  // Log every outbound POST so the user can verify in the Convex
+  // dashboard logs (or the server console) that the call is actually
+  // firing against OpenRouter. Filter server logs by `[mapNormalizer]`
+  // to find one entry per row.
+  console.info(
+    `[mapNormalizer] POST ${url} model=${cfg.model} prompt_prefix="${opts.user.slice(0, 80).replace(/\n/g, " ")}…"`,
+  );
   try {
     const res = await fetch(url, {
       method: "POST",
