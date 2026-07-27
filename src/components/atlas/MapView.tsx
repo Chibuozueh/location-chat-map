@@ -32,6 +32,10 @@ import {
 } from "./types";
 import type { Cluster } from "@/state/imported-data";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  hasAiStandardizedAddress,
+  resolveDisplayAddress,
+} from "@/lib/csv-import";
 
 const DEFAULT_CENTER: [number, number] = [33.74, -84.45];
 const DEFAULT_ZOOM = 12;
@@ -192,12 +196,25 @@ function DescriptionCard({
   point: AnchorPoint;
   onClose: () => void;
 }) {
-  const [showAddress, setShowAddress] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // Read the AI-cleaned address (NOT the raw spreadsheet) when present;
+  // fall back to the raw address for rows that bypassed the AI path.
+  const addr = resolveDisplayAddress(loc);
+  const aiOk = hasAiStandardizedAddress(loc);
+  const gmapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    [addr.street, addr.city, addr.state, addr.postalCode]
+      .filter(Boolean)
+      .join(", "),
+  )}`;
+  const fullAddressInline = [
+    addr.street,
+    [addr.city, addr.state, addr.postalCode].filter(Boolean).join(", "),
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const isMobile = useIsMobile();
-  const cardWidth = 300;
-  const offsetAbove = 56;
+  const cardWidth = 260;
+  const offsetAbove = 48;
   const left = Math.round(point.x - cardWidth / 2);
   const top = Math.round(point.y - offsetAbove);
   // On desktop, clamp left so the card doesn't clip off the left edge.
@@ -250,108 +267,36 @@ function DescriptionCard({
           </div>
         </div>
         {/* Contact links — always visible at the bottom */}
-        {/* Address toggle + reveal — between description and contact strip */}
-        {(loc.address || loc.city || loc.state || loc.postalCode) && (
-          <div className="border-t border-[#6e0e1e1f]">
-            <div className="px-4 pt-2.5">
-              <button
-                type="button"
-                onClick={() => setShowAddress((s) => !s)}
-                aria-expanded={showAddress}
-                aria-label={
-                  showAddress ? "Hide asset address" : "Show asset address"
-                }
-                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2.5 py-1 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-              >
-                <MapPin className="h-3 w-3" />
-                {showAddress ? "Hide address" : "Show address"}
-                {showAddress ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-              </button>
-            </div>
-            <AnimatePresence initial={false}>
-              {showAddress && (
-                <motion.div
-                  key="addr"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.18, ease: "easeOut" }}
-                  className="overflow-hidden"
-                >
-                  <div className="mx-4 mt-2 mb-3 rounded-lg border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[11px] leading-relaxed text-[#0e0a0b]">
-                    <div className="font-semibold tabular-nums">
-                      {loc.address}
-                      {loc.address &&
-                      (loc.city || loc.state || loc.postalCode)
-                        ? ", "
-                        : ""}
-                      {[loc.city, loc.state, loc.postalCode]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          [loc.address, loc.city, loc.state, loc.postalCode]
-                            .filter(Boolean)
-                            .join(", "),
-                        )}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-                      >
-                        <Navigation className="h-3 w-3" /> Directions
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const text = [
-                            loc.address,
-                            loc.city,
-                            loc.state,
-                            loc.postalCode,
-                          ]
-                            .filter(Boolean)
-                            .join(", ");
-                          if (!text) return;
-                          if (
-                            typeof navigator !== "undefined" &&
-                            navigator.clipboard?.writeText
-                          ) {
-                            navigator.clipboard
-                              .writeText(text)
-                              .then(() => {
-                                setCopied(true);
-                                setTimeout(
-                                  () => setCopied(false),
-                                  2000,
-                                );
-                              })
-                              .catch(() => {});
-                          }
-                        }}
-                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
-                      >
-                        {copied ? (
-                          <>
-                            <Check className="h-3 w-3 text-[#6e0e1e]" /> Copied
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-3 w-3 text-[#6e0e1e]" /> Copy
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+        {/* Address strip — AI-cleaned when available, raw fallback otherwise.
+            Kept compact: a single clickable row that opens Google Maps.
+            When the AI didn't standardize, shown with a muted "raw" chip. */}
+        {(fullAddressInline || loc.address) && (
+          <a
+            href={gmapsHref}
+            target="_blank"
+            rel="noreferrer"
+            className="flex shrink-0 items-start gap-1.5 border-t border-[#6e0e1e1f] px-3 py-2 text-[11px] leading-snug text-secondary-foreground transition hover:bg-[#6e0e1e0d]"
+            title={
+              aiOk
+                ? "Atlas Map AI standardized this address"
+                : "Showing the raw spreadsheet address"
+            }
+          >
+            <MapPin className="mt-[2px] h-3 w-3 shrink-0 text-[#6e0e1e]" />
+            <span className="flex-1 tabular-nums text-[#0e0a0b]">
+              {fullAddressInline || loc.address}
+            </span>
+            {!aiOk && loc.cleanedConfidence === "unavailable" && (
+              <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                raw
+              </span>
+            )}
+            {!aiOk && loc.cleanedConfidence === "low" && (
+              <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                low AI
+              </span>
+            )}
+          </a>
         )}
 
         {(loc.website ||
@@ -444,108 +389,36 @@ function DescriptionCard({
             </span>
           )}
         </div>
-        {/* Address toggle + reveal — between description and contact strip */}
-        {(loc.address || loc.city || loc.state || loc.postalCode) && (
-          <div className="border-t border-[#6e0e1e1f]">
-            <div className="px-4 pt-2.5">
-              <button
-                type="button"
-                onClick={() => setShowAddress((s) => !s)}
-                aria-expanded={showAddress}
-                aria-label={
-                  showAddress ? "Hide asset address" : "Show asset address"
-                }
-                className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2.5 py-1 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-              >
-                <MapPin className="h-3 w-3" />
-                {showAddress ? "Hide address" : "Show address"}
-                {showAddress ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-              </button>
-            </div>
-            <AnimatePresence initial={false}>
-              {showAddress && (
-                <motion.div
-                  key="addr"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.18, ease: "easeOut" }}
-                  className="overflow-hidden"
-                >
-                  <div className="mx-4 mt-2 mb-3 rounded-lg border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[11px] leading-relaxed text-[#0e0a0b]">
-                    <div className="font-semibold tabular-nums">
-                      {loc.address}
-                      {loc.address &&
-                      (loc.city || loc.state || loc.postalCode)
-                        ? ", "
-                        : ""}
-                      {[loc.city, loc.state, loc.postalCode]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          [loc.address, loc.city, loc.state, loc.postalCode]
-                            .filter(Boolean)
-                            .join(", "),
-                        )}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-                      >
-                        <Navigation className="h-3 w-3" /> Directions
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const text = [
-                            loc.address,
-                            loc.city,
-                            loc.state,
-                            loc.postalCode,
-                          ]
-                            .filter(Boolean)
-                            .join(", ");
-                          if (!text) return;
-                          if (
-                            typeof navigator !== "undefined" &&
-                            navigator.clipboard?.writeText
-                          ) {
-                            navigator.clipboard
-                              .writeText(text)
-                              .then(() => {
-                                setCopied(true);
-                                setTimeout(
-                                  () => setCopied(false),
-                                  2000,
-                                );
-                              })
-                              .catch(() => {});
-                          }
-                        }}
-                        className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e33] bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
-                      >
-                        {copied ? (
-                          <>
-                            <Check className="h-3 w-3 text-[#6e0e1e]" /> Copied
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="h-3 w-3 text-[#6e0e1e]" /> Copy
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+        {/* Address strip — AI-cleaned when available, raw fallback otherwise.
+            Kept compact: a single clickable row that opens Google Maps.
+            When the AI didn't standardize, shown with a muted "raw" chip. */}
+        {(fullAddressInline || loc.address) && (
+          <a
+            href={gmapsHref}
+            target="_blank"
+            rel="noreferrer"
+            className="flex shrink-0 items-start gap-1.5 border-t border-[#6e0e1e1f] px-3 py-2 text-[11px] leading-snug text-secondary-foreground transition hover:bg-[#6e0e1e0d]"
+            title={
+              aiOk
+                ? "Atlas Map AI standardized this address"
+                : "Showing the raw spreadsheet address"
+            }
+          >
+            <MapPin className="mt-[2px] h-3 w-3 shrink-0 text-[#6e0e1e]" />
+            <span className="flex-1 tabular-nums text-[#0e0a0b]">
+              {fullAddressInline || loc.address}
+            </span>
+            {!aiOk && loc.cleanedConfidence === "unavailable" && (
+              <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                raw
+              </span>
+            )}
+            {!aiOk && loc.cleanedConfidence === "low" && (
+              <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                low AI
+              </span>
+            )}
+          </a>
         )}
 
         {(loc.website ||

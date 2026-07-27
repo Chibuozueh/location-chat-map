@@ -131,8 +131,6 @@ function EvidenceCard({
   ev: AssetEvidence;
   onCitation: (slug: string) => void;
 }) {
-  const [showAddress, setShowAddress] = useState(false);
-  const [copied, setCopied] = useState(false);
   const hasAnyFact =
     !!ev.addressLine ||
     !!ev.hoursToday ||
@@ -174,20 +172,10 @@ function EvidenceCard({
           </span>
         )}
         {ev.addressLine && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              setShowAddress((s) => !s);
-            }}
-            aria-expanded={showAddress}
-            aria-label={showAddress ? "Hide address" : "Show address"}
-            className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-          >
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-card/60 px-2 py-0.5 text-[10.5px] text-secondary-foreground">
             <MapPin className="h-3 w-3" />
-            {showAddress ? "Hide address" : "Show address"}
-          </button>
+            <span className="truncate max-w-[180px]">{ev.addressLine}</span>
+          </span>
         )}
         {ev.ratingLine && (
           <span className="ml-auto text-[10.5px] text-muted-foreground tabular-nums">
@@ -203,7 +191,7 @@ function EvidenceCard({
               <dd className="text-foreground/85">{ev.tagline}</dd>
             </>
           )}
-          {showAddress && ev.addressLine && (
+          {ev.addressLine && (
             <>
               <dt className="text-muted-foreground">Address</dt>
               <dd className="text-foreground/85">{ev.addressLine}</dd>

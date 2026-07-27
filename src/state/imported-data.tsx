@@ -675,6 +675,19 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         let source: "cached" | "fetched" | "cerebras-fixup" | null = null;
         let llmOutcome: "cleaned" | "skipped" | "errored" | null = null;
         let cerebrasAttempted = false;
+        // AI-cleaned address fragments from the Atlas Map AI normalize call.
+        // Hoisted to the per-row scope so the placedDoc construction can
+        // spread it onto the doc regardless of which `if (!coord)` branch
+        // actually ran the normalization.
+        let cleaned: {
+          ok: true;
+          street: string;
+          city?: string;
+          state?: string;
+          postalcode?: string;
+          providerLabel?: string;
+          confidence?: "high" | "medium" | "low";
+        } | null = null;
         // Whichever Cerebras model answered this row's map call. Stays
         // null until `cerebrasAttempted` is true.
         let lastProviderLabel: string | null = null;
@@ -710,13 +723,6 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         if (!coord) {
           const cleanCacheKey = `clean:${key}`;
           const cachedClean = normalizeCacheRef.current.get(cleanCacheKey);
-          let cleaned: {
-            ok: true;
-            street: string;
-            city?: string;
-            state?: string;
-            postalcode?: string;
-          } | null = null;
 
           if (cachedClean && cachedClean.ok) {
             cleaned = cachedClean;
@@ -891,6 +897,33 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // `state.rows` immediately so the map plots them as they come in;
         // failed rows land in `state.failed` so the Retry chip surfaces
         // the moment geocoding is exhausted.
+        // Build the AI-cleaned address fields when the map-side
+        // `normalizeAddress` action returned OK. We persist these onto
+        // the doc so the description popups can surface the LLM-confirmed
+        // USPS-standard fragments instead of the messy spreadsheet raw
+        // values. Rows that bypassed AI (cached exact/relaxed coord
+        // hits, PO Boxes, anything geocoded before this field existed)
+        // get no `cleaned*` fields — the UI falls back to the raw
+        // address cleanly via `resolveDisplayAddress`.
+        const cleanedFields: Record<string, unknown> = (() => {
+          if (llmOutcome === "cleaned" && cleaned) {
+            return {
+              cleanedAddress: cleaned.street,
+              cleanedCity: cleaned.city,
+              cleanedState: cleaned.state,
+              cleanedPostalCode: cleaned.postalcode,
+              cleanedConfidence: cleaned.confidence || "low",
+              cleanedProvider: cleaned.providerLabel,
+              cleanedAt: Date.now(),
+            };
+          }
+          if (llmOutcome === "skipped" || llmOutcome === "errored") {
+            return { cleanedConfidence: "unavailable" };
+          }
+          // llmOutcome undefined → AI wasn't attempted (cached hit etc.)
+          return {};
+        })();
+
         const placedDoc: AtlasAsset | null =
           coord && accuracy
             ? {
@@ -904,6 +937,7 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
                 // sees the user-confirmed schedule rather than the
                 // generic M–F 10–17 placeholder.
                 hours: hoursFromAI || doc.hours,
+                ...cleanedFields,
               }
             : null;
         const failedItem: {

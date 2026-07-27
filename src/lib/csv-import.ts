@@ -73,7 +73,82 @@ export type AtlasAsset = {
   geoKey?: string;
   /** Accuracy bucket from the geocode hit; undefined for rows not yet tried. */
   coordAccuracy?: CoordAccuracy;
+  /**
+   * AI-standardized address from the map-side `normalizeAddress` call.
+   * Populated when the row passed through the OpenRouter pre-parser
+   * AND the LLM returned a usable result. The UI surfaces these values
+   * (not the raw spreadsheet address) when showing the asset's address.
+   *
+   * - `cleanedAddress` / `cleanedCity` / `cleanedState` / `cleanedPostalCode`
+   *   are the LLM-confirmed USPS-standard fragments. `cleanedConfidence`
+   *   carries "high" / "medium" / "low"; "low" means the AI returned
+   *   values but with low certainty — the UI flags this.
+   * - `cleanedAt` is a Unix-ms timestamp so the UI can order rows by
+   *   "most recently standardized".
+   * - When the AI call itself errored or refused, `cleanedConfidence`
+   *   is "unavailable" and the remaining fields stay empty.
+   *   AtlasAssetCheck: presence of any one of address/city/state/postal
+   *   means the AI DID return SOMETHING; absence means the AI didn't.
+   */
+  cleanedAddress?: string;
+  cleanedCity?: string;
+  cleanedState?: string;
+  cleanedPostalCode?: string;
+  cleanedConfidence?: "high" | "medium" | "low" | "unavailable";
+  cleanedProvider?: string;
+  cleanedAt?: number;
 };
+
+/**
+ * Read-side helper. Returns the AI-cleaned address fragments when
+ * present, otherwise the spreadsheet's raw values. Falls back cleanly
+ * for rows that bypassed the AI path (cached exact/relaxed coord hits,
+ * PO Boxes, or anything geocoded before this field existed).
+ */
+export function resolveDisplayAddress(a: AtlasAsset): {
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  /** True iff the values came from the AI normalizer. */
+  fromAI: boolean;
+  /** "high" / "medium" / "low" / "unavailable" — unset for never-cleaned. */
+  confidence?: "high" | "medium" | "low" | "unavailable";
+} {
+  const hasAI =
+    !!a.cleanedAddress ||
+    !!a.cleanedCity ||
+    !!a.cleanedState ||
+    !!a.cleanedPostalCode;
+  return {
+    street: hasAI ? a.cleanedAddress || a.address || "" : a.address || "",
+    city: hasAI ? a.cleanedCity || a.city || "" : a.city || "",
+    state: hasAI ? a.cleanedState || a.state || "" : a.state || "",
+    postalCode: hasAI
+      ? a.cleanedPostalCode || a.postalCode || ""
+      : a.postalCode || "",
+    fromAI: hasAI,
+    confidence: a.cleanedConfidence,
+  };
+}
+
+/**
+ * Convenience: did the AI return SOMETHING usable (any field present
+ * AND confidence isn't "low" / "unavailable")? Returns true only when
+ * there's enough to render. The UI uses this to decide between showing
+ * the cleaned address vs. the "AI couldn't standardize" message.
+ */
+export function hasAiStandardizedAddress(a: AtlasAsset): boolean {
+  const any =
+    !!a.cleanedAddress ||
+    !!a.cleanedCity ||
+    !!a.cleanedState ||
+    !!a.cleanedPostalCode;
+  if (!any) return false;
+  if (a.cleanedConfidence === "low") return false;
+  if (a.cleanedConfidence === "unavailable") return false;
+  return true;
+}
 
 /** Address fragment passed verbatim to Nominatim. */
 export type AddressFragment = {

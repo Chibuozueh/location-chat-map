@@ -1,15 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AtSign,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Copy,
   Globe,
   Mail,
   MapPin,
-  Navigation,
   Phone,
   X,
 } from "lucide-react";
@@ -19,6 +14,10 @@ import {
   PRICE_SYMBOL,
   type LocationDoc,
 } from "./types";
+import {
+  hasAiStandardizedAddress,
+  resolveDisplayAddress,
+} from "@/lib/csv-import";
 
 /**
  * Prefix https:// to bare hostnames so <a href> resolves correctly.
@@ -66,15 +65,6 @@ export function AssetDescriptionPanel({
   loc: LocationDoc | null;
   onClose: () => void;
 }) {
-  const [showAddress, setShowAddress] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  // Reset the toggle / copied feedback when the selection changes.
-  useEffect(() => {
-    setShowAddress(false);
-    setCopied(false);
-  }, [loc?.slug]);
-
   // ESC closes the panel from anywhere in the document.
   useEffect(() => {
     if (!loc) return;
@@ -96,7 +86,7 @@ export function AssetDescriptionPanel({
           transition={{ type: "spring", stiffness: 240, damping: 26 }}
           role="dialog"
           aria-label={`Description for ${loc.name}`}
-          className="pointer-events-auto fixed inset-x-3 bottom-3 top-auto z-[700] flex max-h-[80vh] flex-col overflow-hidden rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f] sm:bottom-6 sm:left-auto sm:right-6 sm:top-auto sm:max-h-[78vh] sm:w-[420px]"
+          className="pointer-events-auto fixed inset-x-3 bottom-3 top-auto z-[700] flex max-h-[80vh] flex-col overflow-hidden rounded-2xl border border-[#6e0e1e] bg-[#faf7f2] shadow-pop ring-1 ring-[#6e0e1e1f] sm:bottom-6 sm:left-auto sm:right-6 sm:top-auto sm:max-h-[78vh] sm:w-[330px]"
         >
           {/* Header — category tag + asset name + tagline + close */}
           <div className="flex items-start justify-between gap-2 border-b border-[#6e0e1e33] bg-[#6e0e1e0d] px-4 py-3">
@@ -152,106 +142,50 @@ export function AssetDescriptionPanel({
             </div>
           </div>
 
-          {/* Address toggle + reveal — collapses to a single pill by default */}
-          {(loc.address || loc.city || loc.state || loc.postalCode) && (
-            <div className="mt-3 border-t border-[#6e0e1e1f] pt-3">
-              <button
-                type="button"
-                onClick={() => setShowAddress((s) => !s)}
-                aria-expanded={showAddress}
-                aria-label={
-                  showAddress ? "Hide asset address" : "Show asset address"
+          {/* AI-cleaned address strip — compact, clickable, replaces the
+              previous toggle+reveal block. Falls back gracefully to the
+              raw address when the AI didn't standardize. */}
+          {(() => {
+            const addr = resolveDisplayAddress(loc);
+            const aiOk = hasAiStandardizedAddress(loc);
+            const line = [addr.street, [addr.city, addr.state, addr.postalCode].filter(Boolean).join(", ")]
+              .filter(Boolean)
+              .join(", ");
+            if (!line && !loc.address) return null;
+            const gmapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+              [addr.street, addr.city, addr.state, addr.postalCode]
+                .filter(Boolean)
+                .join(", "),
+            )}`;
+            return (
+              <a
+                href={gmapsHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex shrink-0 items-start gap-1.5 border-t border-[#6e0e1e1f] px-3 py-2 text-[11px] leading-snug text-secondary-foreground transition hover:bg-[#6e0e1e0d]"
+                title={
+                  aiOk
+                    ? "Atlas Map AI standardized this address"
+                    : "Showing the raw spreadsheet address"
                 }
-                className="inline-flex items-center gap-1.5 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2.5 py-1 text-[11.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
               >
-                <MapPin className="h-3 w-3" />
-                {showAddress ? "Hide address" : "Show address"}
-                {showAddress ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
+                <MapPin className="mt-[2px] h-3 w-3 shrink-0 text-[#6e0e1e]" />
+                <span className="flex-1 tabular-nums text-[#0e0a0b]">
+                  {line || loc.address}
+                </span>
+                {!aiOk && loc.cleanedConfidence === "unavailable" && (
+                  <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                    raw
+                  </span>
                 )}
-              </button>
-              <AnimatePresence initial={false}>
-                {showAddress && (
-                  <motion.div
-                    key="addr"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.18, ease: "easeOut" }}
-                    className="overflow-hidden"
-                  >
-                    <div className="mt-2 rounded-lg border border-[#6e0e1e33] bg-[#6e0e1e0d] px-3 py-2 text-[12px] leading-relaxed text-[#0e0a0b]">
-                      <div className="font-semibold tabular-nums">
-                        {loc.address}
-                        {loc.address && (loc.city || loc.state || loc.postalCode)
-                          ? ", "
-                          : ""}
-                        {[loc.city, loc.state, loc.postalCode]
-                          .filter(Boolean)
-                          .join(", ")}
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                            [loc.address, loc.city, loc.state, loc.postalCode]
-                              .filter(Boolean)
-                              .join(", "),
-                          )}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-full border border-[#6e0e1e] bg-[#6e0e1e0d] px-2 py-0.5 text-[10.5px] font-semibold text-[#6e0e1e] transition hover:bg-[#6e0e1e1f]"
-                        >
-                          <Navigation className="h-3 w-3" /> Directions
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const text = [
-                              loc.address,
-                              loc.city,
-                              loc.state,
-                              loc.postalCode,
-                            ]
-                              .filter(Boolean)
-                              .join(", ");
-                            if (!text) return;
-                            if (
-                              typeof navigator !== "undefined" &&
-                              navigator.clipboard?.writeText
-                            ) {
-                              navigator.clipboard
-                                .writeText(text)
-                                .then(() => {
-                                  setCopied(true);
-                                  setTimeout(
-                                    () => setCopied(false),
-                                    2000,
-                                  );
-                                })
-                                .catch(() => {});
-                            }
-                          }}
-                          className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/40 px-2 py-0.5 text-[10.5px] font-medium text-secondary-foreground transition hover:border-[#6e0e1e] hover:bg-[#6e0e1e0d]"
-                        >
-                          {copied ? (
-                            <>
-                              <Check className="h-3 w-3 text-[#6e0e1e]" /> Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3 w-3 text-[#6e0e1e]" /> Copy
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
+                {!aiOk && loc.cleanedConfidence === "low" && (
+                  <span className="rounded-full border border-border bg-background/40 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
+                    low AI
+                  </span>
                 )}
-              </AnimatePresence>
-            </div>
-          )}
+              </a>
+            );
+          })()}
 
           {/* Contact strip — always visible at the bottom */}
           {(loc.website ||
