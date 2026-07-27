@@ -40,6 +40,16 @@ function canonCategory(s: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Sentinel selectedCategory value for the "Unmapped" pill in
+ * `<CategoryFilter>`. When LandingInner sees this value it auto-switches
+ * the view to "sheet" and feeds `unmappedAssets` to the LocationGrid
+ * so the user sees every row that didn't make it onto the map in one
+ * focused list. Kept as a module constant so import boundaries stay
+ * clean and the sentinel can't be mistyped.
+ */
+const UNMAPPED_TAB = "__unmapped__";
+
 function LandingInner() {
   // The atlas's only data source is the live Google Sheet (auto-fetched
   // below). We no longer pull SEED_LOCATIONS from Convex — the imported
@@ -212,15 +222,67 @@ function LandingInner() {
     [merged.chatOnly, matchesCategory],
   );
 
+  /**
+   * Dynamic ZIP centroids — declared early (before `unmappedAssets`
+   * below) so the unmapped-count memo can reference it without a
+   * TypeScript "used before declaration" error. The actual
+   * Zippopotam.us-fed lookup logic lives in the section further
+   * down in this file; this binding just establishes the shape.
+   */
+  const [dynamicZipCentroids, setDynamicZipCentroids] = useState<
+    Record<string, { lat: number; lng: number }>
+  >({});
+
+  /**
+   * Unmapped assets — rows in `merged.chatOnly` that can't be plotted
+   * even after the ZIP-rescue rescue (static `ATLANTA_ZIP_CENTROIDS`
+   * table + dynamic Zippopotam.us). Drives the live count on the
+   * dashed-border "Unmapped" pill in `<CategoryFilter>` and the
+   * sheet-view list when the user clicks that pill.
+   *
+   * Definition: NaN lat/lng (not in `merged.mappable`) AND the row
+   * doesn't have a valid 5-digit US ZIP that either table covers.
+   * Anything that ZIP-rescue can plot is excluded — those assets will
+   * end up on the map via `augmentedMappable`.
+   */
+  const unmappedAssets = useMemo(
+    () =>
+      merged.chatOnly.filter((a) => {
+        if (Number.isFinite(a.lat) && Number.isFinite(a.lng)) return false;
+        const zip = (a.postalCode ?? "").trim();
+        if (
+          /^\d{5}$/.test(zip) &&
+          (ATLANTA_ZIP_CENTROIDS[zip] || dynamicZipCentroids[zip])
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [merged.chatOnly, dynamicZipCentroids],
+  );
+
+  /** True when the user picked the "Unmapped" pill in the category
+   *  filter. Triggers the auto-sheet-view switch below. */
+  const isUnmappedTab = selectedCategory === UNMAPPED_TAB;
+
+  // When the Unmapped pill is selected, switch the viewport to "sheet"
+  // so the LocationGrid shows the unmapped rows. The map view is
+  // intentionally suppressed for this sentinel — those rows have no
+  // coords by definition, so the map would render zero pins.
+  useEffect(() => {
+    if (isUnmappedTab && view !== "sheet") {
+      setView("sheet");
+    }
+  }, [isUnmappedTab, view]);
+
   // Dynamic ZIP centroids — populated live from Zippopotam.us for any
   // 5-digit US ZIP the hardcoded `ATLANTA_ZIP_CENTROIDS` table doesn't
   // already cover. This lets us rescue rows whose ZIP is valid but
   // outside the Atlanta core (e.g. College Park, Hapeville, Forest
   // Park, etc.) so they still plot at neighborhood accuracy instead of
   // silently dropping off the map.
-  const [dynamicZipCentroids, setDynamicZipCentroids] = useState<
-    Record<string, { lat: number; lng: number }>
-  >({});
+  // (State declaration moved up above `unmappedAssets`; see that
+  // block for the binding.)
 
   // Unique 5-digit ZIPs in the chatOnly bucket that are NOT in the
   // static table and not yet in `dynamicZipCentroids`. Drained one
@@ -426,6 +488,7 @@ function LandingInner() {
               ).length;
               return acc;
             }, {} as Record<string, number>)}
+            unmappedCount={unmappedAssets.length}
           />
         </div>
 
@@ -541,7 +604,7 @@ function LandingInner() {
                 </>
               ) : (
                 <LocationGrid
-                  locations={[...filteredMappable, ...filteredChatOnly] as LocationDoc[]}
+                  locations={(isUnmappedTab ? unmappedAssets : [...filteredMappable, ...filteredChatOnly]) as LocationDoc[]}
                   selectedSlug={selected}
                   onSelect={handleSelectSlug}
                   clusterSizes={((): Record<string, number> => {
