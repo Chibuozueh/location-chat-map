@@ -897,32 +897,27 @@ export function ImportedDataProvider({ children }: { children: ReactNode }) {
         // `state.rows` immediately so the map plots them as they come in;
         // failed rows land in `state.failed` so the Retry chip surfaces
         // the moment geocoding is exhausted.
-        // Build the AI-cleaned address fields when the map-side
-        // `normalizeAddress` action returned OK. We persist these onto
-        // the doc so the description popups can surface the LLM-confirmed
-        // USPS-standard fragments instead of the messy spreadsheet raw
-        // values. Rows that bypassed AI (cached exact/relaxed coord
-        // hits, PO Boxes, anything geocoded before this field existed)
-        // get no `cleaned*` fields — the UI falls back to the raw
-        // address cleanly via `resolveDisplayAddress`.
-        const cleanedFields: Record<string, unknown> = (() => {
-          if (llmOutcome === "cleaned" && cleaned) {
-            return {
-              cleanedAddress: cleaned.street,
-              cleanedCity: cleaned.city,
-              cleanedState: cleaned.state,
-              cleanedPostalCode: cleaned.postalcode,
-              cleanedConfidence: cleaned.confidence || "low",
-              cleanedProvider: cleaned.providerLabel,
-              cleanedAt: Date.now(),
-            };
-          }
-          if (llmOutcome === "skipped" || llmOutcome === "errored") {
-            return { cleanedConfidence: "unavailable" };
-          }
-          // llmOutcome undefined → AI wasn't attempted (cached hit etc.)
-          return {};
-        })();
+        // Build the AI-cleaned address fields inline so the spread into
+        // `placedDoc` doesn't go through a closure — keeps the runtime
+        // reference to `cleaned` lexically trivial. The fields land on
+        // the doc only when the Atlas Map AI normalize call returned OK;
+        // otherwise we persist either an `unavailable` confidence flag
+        // (so the UI can surface "AI couldn't standardize") or nothing
+        // at all (rows that bypassed AI entirely, e.g. cached coord hits).
+        const cleanedFields: Record<string, unknown> =
+          llmOutcome === "cleaned" && cleaned !== null
+            ? {
+                cleanedAddress: cleaned.street,
+                cleanedCity: cleaned.city,
+                cleanedState: cleaned.state,
+                cleanedPostalCode: cleaned.postalcode,
+                cleanedConfidence: cleaned.confidence || "low",
+                cleanedProvider: cleaned.providerLabel,
+                cleanedAt: Date.now(),
+              }
+            : llmOutcome === "skipped" || llmOutcome === "errored"
+              ? { cleanedConfidence: "unavailable" as const }
+              : {};
 
         const placedDoc: AtlasAsset | null =
           coord && accuracy
