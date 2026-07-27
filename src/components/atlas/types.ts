@@ -26,6 +26,8 @@ export const PRICE_TONE: Record<number, string> = {
 };
 
 export const CATEGORY_LABEL: Record<string, string> = {
+  // --- Canonical internal IDs (kept for backwards-compat with any
+  //     seed rows that already use them) ---
   park: "Park / green space",
   "recreation-center": "Recreation center",
   school: "School",
@@ -34,7 +36,79 @@ export const CATEGORY_LABEL: Record<string, string> = {
   "community-center": "Community center",
   museum: "Museum / heritage site",
   transit: "Transit station",
+  // --- The user's live Google Sheet vocabulary. Each canonical lowercase
+  //     key resolves to a single human-readable label, ensuring every
+  //     tab of the spreadsheet — Comm Fitness, Basketball Courts, Gyms
+  //     & Fitness Spaces, Parks & Rec, Aquatics & Swim Locations,
+  //     MARTA Public Transit — renders with consistent, readable text. ---
+  "comm based classes & programming": "Community classes & programming",
+  "comm-based-classes-&-programming": "Community classes & programming",
+  "classes & programming": "Classes & programming",
+  "basketball court": "Basketball court",
+  "basketball courts": "Basketball court",
+  gym: "Gym & fitness space",
+  gyms: "Gym & fitness space",
+  "gym & fitness space": "Gym & fitness space",
+  "gyms & fitness spaces": "Gym & fitness space",
+  "gym & fitness spaces": "Gym & fitness space",
+  "fitness space": "Gym & fitness space",
+  "fitness center": "Fitness center",
+  "recreation center": "Recreation center",
+  "community center": "Community center",
+  "parks & rec": "Park & recreation",
+  "parks and rec": "Park & recreation",
+  "parks & recreation": "Park & recreation",
+  "park & rec": "Park & recreation",
+  "park & recreation": "Park & recreation",
+  "green space": "Green space",
+  "swimming pool": "Swimming pool",
+  pool: "Swimming pool",
+  "aquatic center": "Aquatic center",
+  "aquatics & swim": "Aquatic center",
+  "aquatics & swim locations": "Aquatic center",
+  "aquatics and swim locations": "Aquatic center",
+  swim: "Aquatic center",
+  "marta station": "MARTA station",
+  "marta stop": "MARTA station",
+  "marta public transit": "MARTA public transit",
+  "transit station": "Transit station",
+  "transit stop": "Transit stop",
+  "trail": "Trail",
+  "walking trail": "Walking trail",
+  "bike trail": "Bike trail",
+  "playground": "Playground",
+  "splash pad": "Splash pad",
+  "outdoor recreation": "Outdoor recreation",
+  "wellness program": "Wellness program",
+  "fitness class": "Fitness class",
+  sports: "Sports facility",
 };
+
+/**
+ * Pretty-print a category id, falling back to Title Case for unknown
+ * values so the filter tab label is always readable regardless of how
+ * the upstream spreadsheet appears to be cased.
+ */
+export function prettifyCategoryLabel(category: string | null | undefined): string {
+  if (!category) return "Uncategorized";
+  const lower = category.trim().toLowerCase();
+  if (CATEGORY_LABEL[lower]) return CATEGORY_LABEL[lower];
+  // Title-case by splitting on whitespace / underscores / dashes /
+  // ampersands, capitalizing the first letter of every word, and
+  // collapsing runs of separators. Words like "and" become "&" so the
+  // Sheet's natural-language names ("MARTA Public Transit",
+  // "Aquatics & Swim Locations") read back cleanly.
+  return lower
+    .replace(/[_-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word === "&") return "&";
+      if (word === "and") return "&";
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+}
 
 export const FEATURE_LABEL: Record<string, string> = {
   "public-wifi": "Public Wi-Fi",

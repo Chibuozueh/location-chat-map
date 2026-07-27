@@ -1,5 +1,5 @@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CATEGORY_LABEL } from "./types";
+import { prettifyCategoryLabel } from "./types";
 
 export type CategoryFilterProps = {
   categories: string[];
@@ -42,7 +42,7 @@ export function CategoryFilter({
               value={category}
               className="rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-[11px] font-medium text-muted-foreground data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-primary-foreground"
             >
-              {CATEGORY_LABEL[category] ?? category}
+              {prettifyCategoryLabel(category)}
               {count > 0 && (
                 <span className="ml-1.5 rounded-full bg-background/40 px-1.5 py-px text-[10px] tabular-nums">
                   {count}
