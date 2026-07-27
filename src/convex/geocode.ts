@@ -181,6 +181,53 @@ async function zippoCentroid(
   }
 }
 
+/**
+ * Freeform `q=` query against Nominatim's full-text index. Lets us
+ * recover rows where structured fields (no street OR no zip) couldn't
+ * pin a match — ZIP-less rows with a venue name in `street`, rows with
+ * only a city/state, rows with a recognizable business name, etc.
+ *
+ * Countrycode restricted to `us` so a fuzzy "Atlanta Community Center"
+ * doesn't accidentally hit Atlanta, Texas. Returns the first hit, same
+ * shape as the structured `nominatim()` helper.
+ */
+async function nominatimFreeform(
+  q: string,
+): Promise<{ lat: number; lng: number } | null> {
+  const query = q.trim();
+  if (!query) return null;
+  const params = new URLSearchParams();
+  params.set("q", query);
+  params.set("format", "json");
+  params.set("limit", "1");
+  params.set("addressdetails", "0");
+  params.set("countrycodes", "us");
+  const url = `${NOMINATIM_URL}?${params.toString()}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "AtlantaAtlas/1.0 (community-asset-geocoder)",
+        Accept: "application/json",
+        Referer: "atlanta-atlas.local",
+      },
+    });
+    if (!res.ok) {
+      console.warn("[geocode] freeform non-OK", res.status, query);
+      return null;
+    }
+    const data = (await res.json()) as Array<{ lat: string; lon: string }>;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const first = data[0];
+    const lat = parseFloat(first.lat);
+    const lng = parseFloat(first.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch (err) {
+    console.warn("[geocode] freeform fetch failed", err);
+    return null;
+  }
+}
+
 export const geocodeAddress = action({
   args: {
     street: v.optional(v.string()),
@@ -190,6 +237,16 @@ export const geocodeAddress = action({
     country: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
+    // Log every geocode attempt so the user can verify in DevTools →
+    // Console what the spreadsheet actually fed us for each row.
+    // Filter the console by `[geocode]` to see one line per call.
+    console.info("[geocode] called with", {
+      street: args.street?.trim() ?? null,
+      city: args.city?.trim() ?? null,
+      state: args.state?.trim() ?? null,
+      zip: args.postalcode?.trim() ?? null,
+      country: args.country?.trim() ?? "USA",
+    });
     const street = args.street?.trim();
     const city = args.city?.trim();
     const state = args.state?.trim();
@@ -227,6 +284,23 @@ export const geocodeAddress = action({
     if (hasZip) {
       const r4 = await zippoCentroid(postalcode!);
       if (r4) return { ...r4, accuracy: "zip-centroid" as const };
+    }
+
+    // Tier 5 — Freeform q= full-text fallback. The structured tiers
+    // require a complete street+city+state+zip hit (Tiers 1-3) or a
+    // ZIP-only centroid pin (Tier 4a/4b). ZIP-less rows with anything
+    // in `street`, only a city/state, or a venue-ish keyword like
+    // "MARTA Bankhead" / "Vine City Park" still resolve here because
+    // Nominatim's full-text index accepts fuzzy matches against
+    // business names, parks, libraries, MARTA stations, and Atlanta
+    // neighborhoods. Countrycode is forced to `us` so a fuzzy
+    // "Atlanta Community Center" doesn't accidentally hit Atlanta, TX.
+    const freeform = [street, city, state, postalcode, country]
+      .filter(Boolean)
+      .join(", ");
+    if (freeform) {
+      const r5 = await nominatimFreeform(freeform);
+      if (r5) return { ...r5, accuracy: "relaxed" as const };
     }
 
     return null;
