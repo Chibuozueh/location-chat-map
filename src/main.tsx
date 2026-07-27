@@ -8,22 +8,12 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
-// Retry a dynamic import once if the dev server's module graph is momentarily
-// stale, so the preview doesn't get stuck on a blank page.
-function lazyWithRetry<T extends { default: React.ComponentType<any> }>(
-  factory: () => Promise<T>,
-) {
-  return lazy(() =>
-    factory().catch((error) => {
-      console.warn("[lazyWithRetry] First import failed, retrying once:", error);
-      return factory();
-    }),
-  );
-}
-
-const LandingRoute = lazyWithRetry(() => import("./pages/Landing.tsx"));
-const AuthPage = lazyWithRetry(() => import("./pages/Auth.tsx"));
-const NotFound = lazyWithRetry(() => import("./pages/NotFound.tsx"));
+// Landing is the root route — eager-import it so the dev server cannot fall
+// back to a dynamic-import that the proxy occasionally fails to ship. AuthPage
+// and NotFound stay lazy because they aren't on the cold path.
+import LandingRoute from "./pages/Landing.tsx";
+const AuthPage = lazy(() => import("./pages/Auth.tsx"));
+const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -52,7 +42,9 @@ class ToolbarErrorBoundary extends React.Component<
   }
 }
 
-/** Hard guard so runtime errors never leave the preview as a blank page. */
+/** Hard guard so runtime errors never leave the preview as a blank page.
+ *  Uses SOLID inline colors so the error UI is always visible regardless of
+ *  whether the theme CSS has loaded. */
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; message: string; stack: string }
@@ -70,19 +62,43 @@ class RootErrorBoundary extends React.Component<
   }
   render() {
     if (this.state.hasError) {
+      // Inline styles guarantee visibility even if Tailwind/theme CSS hasn't
+      // loaded or resolves to near-white-on-white colors.
       return (
-        <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
-          <div className="max-w-lg text-center">
-            <p className="text-sm font-semibold">Preview runtime error</p>
-            <p className="mt-2 text-xs text-muted-foreground break-words">
-              {this.state.message}
-            </p>
-            {this.state.stack && (
-              <pre className="mt-3 text-left text-[10px] leading-4 text-muted-foreground/80 max-h-40 overflow-auto rounded border border-border/60 p-2">
-                {this.state.stack}
-              </pre>
-            )}
-          </div>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 999999,
+            overflow: "auto",
+            padding: "32px",
+            background: "#fff1f2",
+            color: "#7f1d1d",
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            fontSize: "14px",
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          <strong style={{ color: "#7f1d1d" }}>Preview runtime error</strong>
+          {"\n\n"}
+          {this.state.message}
+          {this.state.stack && (
+            <>
+              {"\n\n----\n"}
+              <span style={{ color: "#6b7280" }}>{this.state.stack}</span>
+            </>
+          )}
+          {"\n\n----\n"}
+          <a
+            href="/"
+            style={{ color: "#7f1d1d", textDecoration: "underline" }}
+          >
+            Reload the page
+          </a>{" "}
+          after fixing the underlying error.
         </div>
       );
     }
